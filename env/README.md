@@ -83,34 +83,46 @@ env/
 
 ## Reward Function
 
-Defined in `game/rl_splits.py:CarEnv.step`. All terms scale with
-`C = track.complexity` so the curriculum `threshold` stays meaningful across
-all 16 tracks without manual tuning (Track 1 → C=1.0, Track 16 → C=3.45).
+Defined in `game/rl_splits.py:CarEnv.step`. Rewards are **not** scaled by
+complexity — all values are fixed, keeping episode returns comparable across
+tracks in the same rollout buffer. Complexity only scales the curriculum threshold.
 
 | Term | Trigger | Value | Goal |
 |------|---------|-------|------|
 | Forward pulse | Every step | `+speed/max_speed × 0.01` | Prevent stalling |
-| Off-track | Every step off road | `−0.5 × C` | Stay on road |
-| Crash event | on→off transition | `−5.0 × C` | Fewer boundary hits |
-| Lap completion | Gate crossed cleanly | `+50 × time_ratio × dist_ratio × C` | Fast + short path |
-| Out of bounds | Terminal | `−100 × C` | Don't leave screen |
+| Off-track | Every step off road | `−0.5` | Stay on road |
+| Crash event | on→off transition | `−5.0` | Penalise each boundary hit |
+| Lap completion | Gate crossed cleanly | `+50 × time_ratio × dist_ratio` | Fast + efficient path |
+| Out of bounds | Terminal | `−100` | Don't leave screen |
 
-**Lap completion bonus** rewards efficiency on two axes simultaneously:
+**Lap completion bonus:**
 
 ```
 time_ratio = clamp(par_time_steps / actual_lap_steps,  0.5, 2.0)
-dist_ratio = clamp(optimal_dist   / actual_lap_dist,   0.5, 1.5)
+dist_ratio = clamp(optimal_dist   / actual_lap_dist,   0.5, 1.0)
 ```
 
-| Performance | time_ratio | dist_ratio | Lap bonus (C=1) |
-|------------|-----------|-----------|-----------------|
-| Faster than par, tight racing line | 2.0 | 1.5 | +150 |
-| On-par time, near-optimal path | 1.0 | 1.0 | +50 |
-| Slow, meandering path | 0.5 | 0.5 | +12.5 |
+`dist_ratio` is capped at **1.0** — no bonus for going shorter than the track
+centreline (that implies off-track corner cutting). `lap_dist` only accumulates
+while `on_track=True`, closing the exploit where brief grass-cutting reduced
+path length and inflated `dist_ratio`.
 
-**Curriculum window note:** with complexity scaling, the same `threshold=30.0`
-works across all tracks — a competent lap on Track 16 naturally scores ~3.45×
-higher than the same quality lap on Track 1.
+| Performance | time_ratio | dist_ratio | Lap bonus |
+|------------|-----------|-----------|-----------|
+| Faster than par, tight line | 2.0 | 1.0 | +100 |
+| On-par, centreline path | 1.0 | 1.0 | +50 |
+| Slow, meandering | 0.5 | 0.5 | +12.5 |
+
+**Complexity scales the curriculum threshold, not the reward:**
+
+```
+effective_threshold = base_threshold × track.complexity
+```
+
+Track 16 (C=3.45) requires a window mean of `30 × 3.45 = 104` to advance —
+meaning consistently good laps — while Track 1 (C=1.0) only needs 30.
+Because rewards themselves are unscaled, value-function targets stay in the
+same range regardless of which track the agent is currently on.
 
 ## Encoder
 

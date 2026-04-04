@@ -106,34 +106,39 @@ obs, reward, done, info = env.step([accel, steer])
 
 ### Reward Function
 
-All terms scale with `C = track.complexity` so the curriculum `threshold` stays
-meaningful across all 16 tracks without manual tuning.
+Rewards are **not** scaled by complexity — all values are fixed and comparable
+across every track. Complexity only scales the curriculum `threshold`.
 
-| Term | Trigger | Value |
-|------|---------|-------|
-| Forward pulse | Every step | `+speed/max_speed × 0.01` |
-| Off-track | Every step off road | `−0.5 × C` |
-| Crash event | on→off boundary crossing | `−5.0 × C` |
-| Lap completion | Gate crossed cleanly | `+50 × time_ratio × dist_ratio × C` |
-| Out of bounds | Terminal | `−100 × C` |
+| Term | Trigger | Value | Purpose |
+|------|---------|-------|---------|
+| Forward pulse | Every step | `+speed/max_speed × 0.01` | Prevent stalling |
+| Off-track | Every step off road | `−0.5` | Stay on road |
+| Crash event | on→off transition | `−5.0` | Penalise each boundary hit |
+| Lap completion | Gate crossed cleanly | `+50 × time_ratio × dist_ratio` | Fast + efficient path |
+| Out of bounds | Terminal | `−100` | Don't leave screen |
 
 **Lap completion breakdown:**
 
 ```
 time_ratio = clamp(par_time_steps / actual_lap_steps,  0.5, 2.0)
-dist_ratio = clamp(optimal_dist   / actual_lap_dist,   0.5, 1.5)
+dist_ratio = clamp(optimal_dist   / actual_lap_dist,   0.5, 1.0)
 ```
 
-- Faster than par → `time_ratio > 1` → reward multiplied up (max 2×)
-- Shorter path → `dist_ratio > 1` → reward multiplied up (max 1.5×)
-- Best possible lap: `50 × 2.0 × 1.5 × C = 150 × C`
-- Worst completed lap: `50 × 0.5 × 0.5 × C = 12.5 × C`
+- `dist_ratio` capped at **1.0** — no bonus for paths shorter than the centreline
+  (any such path involves off-track corner cutting). `lap_dist` is only
+  accumulated while `on_track=True`, closing the corner-cutting exploit.
+- Best lap: `50 × 2.0 × 1.0 = 100`
+- Worst completed lap: `50 × 0.5 × 0.5 = 12.5`
 
-**Complexity examples:**
+**Curriculum threshold scales with complexity, rewards do not:**
 
-| Track | Width | Max speed | C |
-|-------|-------|-----------|---|
-| 1 — Wide Oval | 115 | 3.0 | 1.00 |
-| 8 — Small Oval | 60 | 3.2 | 2.03 |
-| 14 — T-Notch | 58 | 4.0 | 2.66 |
-| 16 — Master Challenge | 50 | 4.5 | 3.45 |
+```
+effective_threshold = base_threshold × track.complexity
+```
+
+| Track | C | Effective threshold (base=30) |
+|-------|---|-------------------------------|
+| 1 — Wide Oval | 1.00 | 30 |
+| 8 — Small Oval | 2.03 | 61 |
+| 14 — T-Notch | 2.66 | 80 |
+| 16 — Master Challenge | 3.45 | 104 |

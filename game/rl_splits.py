@@ -121,25 +121,28 @@ class CarEnv:
           accel  > 0 → accelerate,  < 0 → brake
           steer  > 0 → right,        < 0 → left
 
-    Reward (all terms scaled by track.complexity so harder tracks give bigger signals):
+    Reward (scale-invariant — NOT multiplied by complexity):
 
         Per step
-          + speed/max_speed * 0.01            tiny forward pulse
-          - 0.5  * C   per step off track     discourages leaving road
-          - 5.0  * C   on crash event         penalises each on→off transition
+          + speed/max_speed * 0.01     tiny forward pulse
+          - 0.5   per step off track   discourages leaving road
+          - 5.0   on crash event       penalises each on→off transition
 
         On lap completion
-          + 50 * time_ratio * dist_ratio * C
+          + 50 * time_ratio * dist_ratio
             time_ratio = par_time / actual_lap_time   clamped [0.5, 2.0]
-                         >1 means faster than par (reward scales up)
-            dist_ratio  = optimal_dist / actual_dist  clamped [0.5, 1.5]
-                         >1 means shorter path than centerline (reward scales up)
+                         >1 means faster than par
+            dist_ratio  = optimal_dist / actual_dist  clamped [0.5, 1.0]
+                         capped at 1.0 — no bonus for paths shorter than
+                         centreline (implies corner cutting off-track).
+                         lap_dist only accumulates while on_track.
 
         Terminal
-          - 100 * C   if car leaves screen bounds (episode ends)
+          - 100   if car leaves screen bounds (episode ends)
 
-        complexity C = (115 / track.width) * (track.max_speed / 3.0)
-                       Track 1 → 1.0 | Track 16 → 3.45
+        Complexity (track.complexity) scales the curriculum threshold only,
+        not the reward — keeping value-function targets comparable across all
+        tracks when easy and hard episodes mix in the same rollout buffer.
 
     Done conditions:
         * car leaves screen
@@ -210,29 +213,35 @@ class CarEnv:
         self._update_physics(accel, steer)
         self._step += 1
 
-        # Accumulate lap distance
+        on        = self.track.on_track(self._x, self._y)
+        curr_side = self.track.gate_side(self._x, self._y)
+
+        # Accumulate lap distance only while on track.
+        # Off-track segments are excluded so the agent cannot reduce lap_dist
+        # (and inflate dist_ratio) by cutting corners through the grass.
         dx = self._x - self._lap_prev_x
         dy = self._y - self._lap_prev_y
-        self._lap_dist  += math.hypot(dx, dy)
+        if on:
+            self._lap_dist += math.hypot(dx, dy)
         self._lap_prev_x = self._x
         self._lap_prev_y = self._y
 
-        on        = self.track.on_track(self._x, self._y)
-        curr_side = self.track.gate_side(self._x, self._y)
-        C         = self.track.complexity
-
         # ── Reward ───────────────────────────────────────────────────────────
+        # Complexity (C) is NOT applied here — it belongs in the curriculum
+        # threshold so that reward scale stays comparable across all tracks.
+        # This prevents value-function miscalibration when replaying easy and
+        # hard tracks in the same rollout buffer.
 
         # 1. Tiny forward pulse — keeps agent from stalling
         reward = self._speed / self.track.max_speed * 0.01
 
         # 2. Off-track per-step penalty
         if not on:
-            reward -= 0.5 * C
+            reward -= 0.5
 
         # 3. Crash event penalty (on_track → off_track transition)
         if self._was_on_track and not on:
-            reward -= 5.0 * C
+            reward -= 5.0
             self._crash_count += 1
         self._was_on_track = on
 
@@ -245,15 +254,16 @@ class CarEnv:
             lap_steps = max(1, self._step - self._lap_start_step)
             lap_dist  = max(1.0, self._lap_dist)
 
-            # faster than par → time_ratio > 1.0 (reward scales up)
+            # Faster than par → time_ratio > 1.0
             time_ratio = min(2.0, max(0.5,
                 self.track.par_time_steps / lap_steps))
 
-            # shorter path than centerline → dist_ratio > 1.0 (reward scales up)
-            dist_ratio = min(1.5, max(0.5,
+            # dist_ratio capped at 1.0: no bonus for going shorter than
+            # centreline — any such path involves off-track corner cutting.
+            dist_ratio = min(1.0, max(0.5,
                 self.track.optimal_dist / lap_dist))
 
-            reward += 50.0 * time_ratio * dist_ratio * C
+            reward += 50.0 * time_ratio * dist_ratio
 
             # Reset lap tracking for next lap
             self._lap_start_step = self._step
@@ -266,7 +276,7 @@ class CarEnv:
         # 5. Terminal out-of-bounds
         out_of_bounds = not (0 <= self._x < 900 and 0 <= self._y < 600)
         if out_of_bounds:
-            reward -= 100.0 * C
+            reward -= 100.0
 
         done = (out_of_bounds
                 or self._step >= self.max_steps
@@ -379,12 +389,22 @@ class CurriculumSampler:
         self._rewards.append(episode_reward)
 
     def should_advance(self):
-        """True if the agent has hit the threshold on the frontier track."""
+        """
+        True if the agent has hit the threshold on the frontier track.
+
+        The effective threshold scales with track complexity so that the same
+        base threshold means "reliable good laps" regardless of track difficulty.
+        Rewards themselves are NOT scaled by complexity, so easy and hard track
+        episodes are comparable inside the same rollout buffer.
+
+            effective_threshold = self.threshold × frontier_track.complexity
+        """
         if self._idx >= len(self.tracks) - 1:
             return False
         if len(self._rewards) < self.window:
             return False
-        return statistics.mean(self._rewards) >= self.threshold
+        effective = self.threshold * self.frontier_track.complexity
+        return statistics.mean(self._rewards) >= effective
 
     def advance(self):
         """Move to the next track. Clears the rolling reward buffer."""
@@ -397,9 +417,11 @@ class CurriculumSampler:
     def status(self):
         mean = statistics.mean(self._rewards) if self._rewards else float("nan")
         t = self.frontier_track
+        effective = self.threshold * t.complexity
         return (f"Frontier: track {t.level} '{t.name}'  "
                 f"[{self._idx+1}/{len(self.tracks)}]  "
-                f"rolling_mean={mean:.2f}  threshold={self.threshold:.2f}")
+                f"rolling_mean={mean:.2f}  "
+                f"threshold={effective:.2f} (base={self.threshold:.2f} × C={t.complexity:.2f})")
 
 
 # ── Evaluator ─────────────────────────────────────────────────────────────────
