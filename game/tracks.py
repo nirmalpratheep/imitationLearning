@@ -61,11 +61,49 @@ class TrackDef:
 
         self.surface = None
         self.mask = None
+        self.hud_corner = (8, 8)  # default; updated after build()
 
         # Unit vector in start_angle direction (for gate_side)
         rad = math.radians(start_angle)
         self._gate_dx = math.cos(rad)
         self._gate_dy = math.sin(rad)
+
+        # ── Reward metadata (computed once here, used by CarEnv) ─────────────
+        # Perimeter of the waypoint polygon = approximate track centerline length
+        self.optimal_dist = sum(
+            math.hypot(waypoints[(i + 1) % len(waypoints)][0] - waypoints[i][0],
+                       waypoints[(i + 1) % len(waypoints)][1] - waypoints[i][1])
+            for i in range(len(waypoints))
+        )
+
+        # Expected lap time (frames) at 70 % of max speed — accounts for corners
+        self.par_time_steps = self.optimal_dist / (max_speed * 0.70)
+
+        # Difficulty multiplier: narrow + fast = harder
+        # Track 1 (width=115, spd=3.0) → 1.0 | Track 16 (width=50, spd=4.5) → 3.45
+        _BASE_WIDTH = 115.0
+        _BASE_SPEED = 3.0
+        self.complexity = (_BASE_WIDTH / width) * (max_speed / _BASE_SPEED)
+
+    def _best_hud_corner(self, panel_w, panel_h, margin=8):
+        """Return (x, y) of the screen corner with fewest track pixels under the HUD panel."""
+        corners = [
+            (margin, margin),
+            (SCREEN_W - panel_w - margin, margin),
+            (margin, SCREEN_H - panel_h - margin),
+            (SCREEN_W - panel_w - margin, SCREEN_H - panel_h - margin),
+        ]
+        best_pos, best_count = corners[0], float('inf')
+        for cx, cy in corners:
+            count = sum(
+                1
+                for px in range(cx, cx + panel_w, 6)
+                for py in range(cy, cy + panel_h, 6)
+                if self.mask.get_at((px, py))[0] > 128
+            )
+            if count < best_count:
+                best_count, best_pos = count, (cx, cy)
+        return best_pos
 
     def build(self):
         """Draw the track onto self.surface and build self.mask."""
@@ -101,6 +139,7 @@ class TrackDef:
         for pt in ipts_list:
             pygame.draw.circle(mask_surf, C_WHITE, pt, r_out)
         self.mask = mask_surf
+        self.hud_corner = self._best_hud_corner(330, 175)
 
     def _draw_start_finish(self, surf):
         """

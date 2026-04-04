@@ -18,8 +18,8 @@ Controls:
 import math
 import pygame
 
-from game import SCREEN_W, SCREEN_H, draw_headlights, draw_car
-from tracks import TRACKS
+from .oval_racer import SCREEN_W, SCREEN_H, draw_headlights, draw_car
+from .tracks import TRACKS
 
 FPS = 60
 
@@ -78,34 +78,26 @@ def _draw_path(surf, pts, color, width=2):
 
 
 def draw_hud(surf, track, car, race, fonts):
-    font, small = fonts
-    state = race.state
+    _, small = fonts
 
-    panel = pygame.Surface((330, 175), pygame.SRCALPHA)
-    panel.fill((0, 0, 0, 170))
-    surf.blit(panel, (8, 8))
+    lt = race.lap_elapsed()
+    text = (
+        f"Lv{track.level}: {track.name}"
+        f"   Spd {abs(car.speed)*FPS:4.1f}"
+        f"   Attempt {race.attempts}"
+        f"   Lap {lt:.2f}s"
+        f"   Total {race.total_elapsed():.2f}s"
+        f"   Dist {race.current_distance:.0f}px"
+        f"   Max {race._max_spd:.1f}"
+        f"   |  Arrows=drive  N/P=track  1-9=jump  R=restart  ESC=quit"
+    )
 
-    def put(text, color, row):
-        surf.blit(font.render(text, True, color), (16, 14 + row * 23))
-
-    lt   = race.lap_elapsed()  if state == RACING else race.lap_time
-    dist = race.current_distance if state == RACING else race.lap_dist
-    mspd = race._max_spd        if state == RACING else race.lap_max_spd
-    aspd = (race._spd_sum / race._spd_count if race._spd_count else 0.0) \
-           if state == RACING else race.lap_avg_spd
-
-    put(f"Track    Lv{track.level}: {track.name}",     C_HUD, 0)
-    put(f"Speed    {abs(car.speed)*FPS:5.1f} px/s",     C_HUD, 1)
-    put(f"Attempt  {race.attempts}",                   C_HUD, 2)
-    put(f"Lap time {lt:.2f}s",                         C_HUD, 3)
-    put(f"Total    {race.total_elapsed():.2f}s",       C_HUD, 4)
-    put(f"Distance {dist:.0f} px",                     C_HUD, 5)
-    put(f"Max spd  {mspd:.1f} px/s",                   C_HUD, 6)
-
-    hint = small.render(
-        "Arrows=drive  N/P=track  1-9=jump  R=restart  ESC=quit",
-        True, (140, 140, 140))
-    surf.blit(hint, (SCREEN_W // 2 - hint.get_width() // 2, SCREEN_H - 20))
+    rendered = small.render(text, True, C_HUD)
+    bar_h = rendered.get_height() + 4
+    bar = pygame.Surface((SCREEN_W, bar_h), pygame.SRCALPHA)
+    bar.fill((0, 0, 0, 200))
+    surf.blit(bar, (0, 0))
+    surf.blit(rendered, (6, 2))
 
 
 def draw_summary(surf, race, fonts):
@@ -161,8 +153,10 @@ class RaceState:
         self.state       = RACING
         self.attempts    = 1
 
-        self.total_start = pygame.time.get_ticks()  # never resets
-        self.lap_start   = pygame.time.get_ticks()  # resets each attempt
+        self._lap_timer_started   = False  # starts on first key press per attempt
+        self._total_timer_started = False  # starts on first key press ever
+        self.total_start = None
+        self.lap_start   = None
 
         self.lap_time    = 0.0   # locked on finish
         self.lap_dist    = 0.0   # locked on finish
@@ -186,11 +180,15 @@ class RaceState:
     # ── helpers ──────────────────────────────────────────────────────────────
 
     def lap_elapsed(self):
+        if not self._lap_timer_started:
+            return 0.0
         return (pygame.time.get_ticks() - self.lap_start) / 1000.0
 
     def total_elapsed(self):
         if self.state == DONE:
             return self.total_time
+        if not self._total_timer_started:
+            return 0.0
         return (pygame.time.get_ticks() - self.total_start) / 1000.0
 
     def _record(self):
@@ -222,7 +220,8 @@ class RaceState:
         self._prev_x  = self.car.x
         self._prev_y  = self.car.y
         self.attempts   += 1
-        self.lap_start   = pygame.time.get_ticks()
+        self.lap_start          = None
+        self._lap_timer_started = False
         self.prev_side   = self.track.gate_side(self.car.x, self.car.y)
         self._lap_armed  = False
 
@@ -234,6 +233,14 @@ class RaceState:
     def step(self, accel, steer):
         if self.state == DONE:
             return
+
+        if (accel != 0 or steer != 0) and not self._lap_timer_started:
+            now = pygame.time.get_ticks()
+            self.lap_start = now
+            self._lap_timer_started = True
+            if not self._total_timer_started:
+                self.total_start = now
+                self._total_timer_started = True
 
         self.car.update(accel, steer)
         self._record()
@@ -271,9 +278,9 @@ class RaceState:
         draw_headlights(surf, self.car.x, self.car.y, self.car.angle)
         draw_car(surf, self.car.x, self.car.y, self.car.angle)
 
-        draw_hud(surf, self.track, self.car, self, fonts)
-
-        if self.state == DONE:
+        if self.state == RACING:
+            draw_hud(surf, self.track, self.car, self, fonts)
+        else:
             draw_summary(surf, self, fonts)
 
 

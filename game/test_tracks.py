@@ -14,7 +14,7 @@ import pygame
 pygame.init()
 pygame.display.set_mode((1, 1))
 
-from tracks import TRACKS, SCREEN_W, SCREEN_H
+from game.tracks import TRACKS, SCREEN_W, SCREEN_H
 
 ACCEL     = 0.13
 STEER_DEG = 2.7

@@ -70,7 +70,7 @@ def _ensure_pygame():
 # ── Track splits ─────────────────────────────────────────────────────────────
 
 def _get_splits():
-    from tracks import TRACKS          # TRACKS is 0-indexed, levels are 1-indexed
+    from .tracks import TRACKS          # TRACKS is 0-indexed, levels are 1-indexed
     by_level = {t.level: t for t in TRACKS}
 
     train_levels = [1, 2,  5, 6,  9, 10,  13, 14]   # 2 per group, easy→hard
@@ -121,11 +121,25 @@ class CarEnv:
           accel  > 0 → accelerate,  < 0 → brake
           steer  > 0 → right,        < 0 → left
 
-    Reward per step:
-        + speed/max_speed * 0.1          forward progress
-        - 1.0  if off track
-        + 50.0 on lap completion
-        - 100.0 if car leaves screen bounds  (episode ends)
+    Reward (all terms scaled by track.complexity so harder tracks give bigger signals):
+
+        Per step
+          + speed/max_speed * 0.01            tiny forward pulse
+          - 0.5  * C   per step off track     discourages leaving road
+          - 5.0  * C   on crash event         penalises each on→off transition
+
+        On lap completion
+          + 50 * time_ratio * dist_ratio * C
+            time_ratio = par_time / actual_lap_time   clamped [0.5, 2.0]
+                         >1 means faster than par (reward scales up)
+            dist_ratio  = optimal_dist / actual_dist  clamped [0.5, 1.5]
+                         >1 means shorter path than centerline (reward scales up)
+
+        Terminal
+          - 100 * C   if car leaves screen bounds (episode ends)
+
+        complexity C = (115 / track.width) * (track.max_speed / 3.0)
+                       Track 1 → 1.0 | Track 16 → 3.45
 
     Done conditions:
         * car leaves screen
@@ -142,14 +156,22 @@ class CarEnv:
     def __init__(self, track, max_steps=3000, laps_target=3):
         _ensure_pygame()
         self.track = track
-        self.max_steps  = max_steps
+        self.max_steps   = max_steps
         self.laps_target = laps_target
         track.build()
 
         self._x = self._y = self._angle = self._speed = 0.0
-        self._prev_side = 0.0
-        self._laps = 0
-        self._step = 0
+        self._prev_side  = 0.0
+        self._laps       = 0
+        self._step       = 0
+        # lap metrics (reset each lap)
+        self._lap_start_step = 0
+        self._lap_dist       = 0.0
+        self._lap_prev_x     = 0.0
+        self._lap_prev_y     = 0.0
+        # crash tracking (on_track → off_track transitions)
+        self._was_on_track   = True
+        self._crash_count    = 0
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -170,9 +192,15 @@ class CarEnv:
         self._y     = float(self.track.start_pos[1])
         self._angle = float(self.track.start_angle)
         self._speed = 0.0
-        self._prev_side = self.track.gate_side(self._x, self._y)
-        self._laps  = 0
-        self._step  = 0
+        self._prev_side      = self.track.gate_side(self._x, self._y)
+        self._laps           = 0
+        self._step           = 0
+        self._lap_start_step = 0
+        self._lap_dist       = 0.0
+        self._lap_prev_x     = self._x
+        self._lap_prev_y     = self._y
+        self._was_on_track   = True
+        self._crash_count    = 0
         return self._obs()
 
     def step(self, action):
@@ -182,33 +210,74 @@ class CarEnv:
         self._update_physics(accel, steer)
         self._step += 1
 
-        on = self.track.on_track(self._x, self._y)
-        curr_side = self.track.gate_side(self._x, self._y)
+        # Accumulate lap distance
+        dx = self._x - self._lap_prev_x
+        dy = self._y - self._lap_prev_y
+        self._lap_dist  += math.hypot(dx, dy)
+        self._lap_prev_x = self._x
+        self._lap_prev_y = self._y
 
-        # Lap detection
+        on        = self.track.on_track(self._x, self._y)
+        curr_side = self.track.gate_side(self._x, self._y)
+        C         = self.track.complexity
+
+        # ── Reward ───────────────────────────────────────────────────────────
+
+        # 1. Tiny forward pulse — keeps agent from stalling
+        reward = self._speed / self.track.max_speed * 0.01
+
+        # 2. Off-track per-step penalty
+        if not on:
+            reward -= 0.5 * C
+
+        # 3. Crash event penalty (on_track → off_track transition)
+        if self._was_on_track and not on:
+            reward -= 5.0 * C
+            self._crash_count += 1
+        self._was_on_track = on
+
+        # 4. Lap completion — main signal
         lap_done = (self._prev_side < -5.0 and curr_side >= 0.0
                     and abs(self._speed) > 0.3)
         if lap_done:
             self._laps += 1
+
+            lap_steps = max(1, self._step - self._lap_start_step)
+            lap_dist  = max(1.0, self._lap_dist)
+
+            # faster than par → time_ratio > 1.0 (reward scales up)
+            time_ratio = min(2.0, max(0.5,
+                self.track.par_time_steps / lap_steps))
+
+            # shorter path than centerline → dist_ratio > 1.0 (reward scales up)
+            dist_ratio = min(1.5, max(0.5,
+                self.track.optimal_dist / lap_dist))
+
+            reward += 50.0 * time_ratio * dist_ratio * C
+
+            # Reset lap tracking for next lap
+            self._lap_start_step = self._step
+            self._lap_dist       = 0.0
+            self._lap_prev_x     = self._x
+            self._lap_prev_y     = self._y
+
         self._prev_side = curr_side
 
-        # Reward
-        reward  =  self._speed / self.track.max_speed * 0.1   # forward motion
-        reward -= (0.0 if on else 1.0)                        # off-track penalty
-        reward += (50.0 if lap_done else 0.0)                 # lap bonus
-
-        # Termination
+        # 5. Terminal out-of-bounds
         out_of_bounds = not (0 <= self._x < 900 and 0 <= self._y < 600)
         if out_of_bounds:
-            reward -= 100.0
+            reward -= 100.0 * C
+
         done = (out_of_bounds
                 or self._step >= self.max_steps
-                or self._laps  >= self.laps_target)
+                or self._laps >= self.laps_target)
 
         return self._obs(), reward, done, {
-            "lap": self._laps,
-            "on_track": on,
-            "step": self._step,
+            "lap":          self._laps,
+            "on_track":     on,
+            "step":         self._step,
+            "crashes":      self._crash_count,
+            "lap_dist":     self._lap_dist,
             "out_of_bounds": out_of_bounds,
         }
 
