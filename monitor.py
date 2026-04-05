@@ -19,8 +19,31 @@ import sys
 import time
 from pathlib import Path
 
-# Force unbuffered output so redirected files update in real time
-sys.stdout.reconfigure(line_buffering=True)
+
+class _Tee:
+    """Write to both stdout and a log file simultaneously."""
+    def __init__(self, log_path):
+        self._stdout = sys.__stdout__
+        self._file = open(log_path, "a", buffering=1, encoding="utf-8")
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+    @property
+    def encoding(self):
+        return self._stdout.encoding
+
+    def reconfigure(self, **kwargs):
+        pass  # already line-buffered via buffering=1
+
+
+LOG_FILE = Path("monitor.log")
+sys.stdout = _Tee(LOG_FILE)
 
 # ── Thresholds at each 50k boundary ──────────────────────────────────────────
 # (min_reward, min_on_track_pct, min_explained_var, max_grad_norm)
