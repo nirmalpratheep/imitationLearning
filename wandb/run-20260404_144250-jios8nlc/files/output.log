@@ -1,0 +1,19 @@
+torch.compile enabled
+Model: 624,325 parameters  |  Device: cpu  |  Envs: 8
+Total steps : 5,000,000
+Rollout     : 2048 steps × 8 envs = 16384 per update  |  Minibatch: 256  |  Epochs: 4
+Curriculum  : threshold=30.0  window=50  replay=0.3
+Frontier    : track 1 'Wide Oval'
+W&B         : https://wandb.ai/nirmalpratheep-self/curriculum-car-racer/runs/jios8nlc
+      Step  Track  Name                      SPS       KL  Entropy   PG loss  VF loss
+Traceback (most recent call last):
+  File "C:\Users\ssuga\nirmalp\imitationLearning\train.py", line 737, in <module>
+    main()
+  File "C:\Users\ssuga\nirmalp\imitationLearning\train.py", line 420, in main
+    print("─" * 82)
+  File "C:\Users\ssuga\anaconda3\Lib\site-packages\wandb\sdk\lib\redirect.py", line 640, in write
+    self._old_write(data)
+  File "C:\Users\ssuga\anaconda3\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-81: character maps to <undefined>

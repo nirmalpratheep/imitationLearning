@@ -1,0 +1,114 @@
+Monitor started — polling every 60s
+      Step    Reward   OnTrack      EV       KL   GradN  Stop  Lvl    SPS
+------------------------------------------------------------------------------------------
+  step= 208,192  reward=  -125.4  on_track= 93.0%  ev= 0.438  kl= 0.0032  grad=   1.5  stopped=0  lvl=0  sps=72
+
+======================================================================
+  PASS  50k check at step 208,192
+  WARN  explained_variance 0.438 < 0.5 (watching, will act if still low next check)
+======================================================================
+
+
+======================================================================
+  PASS  100k check at step 208,192
+  WARN  explained_variance 0.438 < 0.7 (watching, will act if still low next check)
+======================================================================
+
+
+======================================================================
+  PASS  150k check at step 208,192
+  WARN  explained_variance 0.438 < 0.8 (watching, will act if still low next check)
+======================================================================
+
+
+======================================================================
+  PASS  200k check at step 208,192
+  WARN  explained_variance 0.438 < 0.85 (watching, will act if still low next check)
+======================================================================
+
+  step= 212,992  reward=     0.2  on_track=100.0%  ev= 0.765  kl= 0.0051  grad=   0.4  stopped=0  lvl=0  sps=72
+  step= 228,312  reward=   -47.6  on_track= 97.8%  ev= 0.765  kl= 0.0051  grad=   0.4  stopped=0  lvl=0  sps=72
+  step= 232,192  reward=     0.3  on_track=100.0%  ev= 0.206  kl= 0.0066  grad=   4.8  stopped=0  lvl=0  sps=71
+  step= 233,104  reward=     0.2  on_track=100.0%  ev= 0.206  kl= 0.0066  grad=   4.8  stopped=0  lvl=0  sps=71
+  step= 250,016  reward=     0.3  on_track=100.0%  ev= 0.833  kl= 0.0069  grad=   0.5  stopped=0  lvl=0  sps=71
+
+======================================================================
+  PASS  250k check at step 250,016
+  WARN  explained_variance 0.833 < 0.85 (watching, will act if still low next check)
+======================================================================
+
+  step= 256,192  reward=     0.2  on_track=100.0%  ev= 0.833  kl= 0.0069  grad=   0.5  stopped=0  lvl=0  sps=71
+  step= 262,144  reward=     0.1  on_track=100.0%  ev= 0.816  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=70
+  step= 273,592  reward=    -0.0  on_track=100.0%  ev= 0.816  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=70
+  step= 276,312  reward=     0.3  on_track=100.0%  ev= 0.816  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=70
+  step= 276,816  reward=     0.3  on_track=100.0%  ev= 0.816  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=70
+  step= 281,104  reward=    -0.1  on_track=100.0%  ev= 0.849  kl= 0.0053  grad=   0.5  stopped=0  lvl=0  sps=70
+  step= 300,312  reward=     0.1  on_track=100.0%  ev= 0.888  kl= 0.0045  grad=   0.4  stopped=0  lvl=0  sps=70
+
+======================================================================
+  PASS  300k check at step 300,312
+======================================================================
+
+  step= 305,104  reward=     0.2  on_track=100.0%  ev= 0.888  kl= 0.0045  grad=   0.4  stopped=0  lvl=0  sps=70
+  step= 310,400  reward=     0.2  on_track=100.0%  ev= 0.888  kl= 0.0045  grad=   0.4  stopped=0  lvl=0  sps=70
+  step= 324,312  reward=     0.2  on_track=100.0%  ev= 0.816  kl= 0.0059  grad=   0.5  stopped=0  lvl=0  sps=69
+  step= 328,192  reward=    -0.1  on_track=100.0%  ev= 0.745  kl= 0.0069  grad=   0.5  stopped=0  lvl=0  sps=69
+  step= 329,104  reward=    -0.0  on_track=100.0%  ev= 0.745  kl= 0.0069  grad=   0.5  stopped=0  lvl=0  sps=69
+  step= 348,816  reward=     0.4  on_track=100.0%  ev= 0.786  kl= 0.0074  grad=   0.4  stopped=0  lvl=0  sps=69
+  step= 353,104  reward=     0.5  on_track=100.0%  ev= 0.786  kl= 0.0074  grad=   0.4  stopped=0  lvl=0  sps=69
+
+======================================================================
+  PASS  350k check at step 353,104
+  WARN  explained_variance 0.786 < 0.88 (watching, will act if still low next check)
+======================================================================
+
+  step= 358,400  reward=     0.4  on_track=100.0%  ev= 0.786  kl= 0.0074  grad=   0.4  stopped=0  lvl=0  sps=69
+  step= 372,312  reward=     0.2  on_track=100.0%  ev= 0.779  kl= 0.0060  grad=   0.4  stopped=0  lvl=0  sps=68
+  step= 372,816  reward=     0.5  on_track=100.0%  ev= 0.779  kl= 0.0060  grad=   0.4  stopped=0  lvl=0  sps=68
+  step= 376,832  reward=     0.6  on_track=100.0%  ev= 0.760  kl= 0.0074  grad=   0.4  stopped=0  lvl=0  sps=68
+  step= 377,104  reward=     0.3  on_track=100.0%  ev= 0.760  kl= 0.0074  grad=   0.4  stopped=0  lvl=0  sps=68
+  step= 396,816  reward=     0.6  on_track=100.0%  ev= 0.747  kl= 0.0115  grad=   0.5  stopped=0  lvl=0  sps=68
+  step= 401,104  reward=     0.6  on_track=100.0%  ev= 0.747  kl= 0.0115  grad=   0.5  stopped=0  lvl=0  sps=68
+
+======================================================================
+  PASS  400k check at step 401,104
+  WARN  explained_variance 0.747 < 0.9 (watching, will act if still low next check)
+======================================================================
+
+  step= 406,400  reward=     0.5  on_track=100.0%  ev= 0.747  kl= 0.0115  grad=   0.5  stopped=0  lvl=0  sps=68
+  step= 420,312  reward=     0.5  on_track=100.0%  ev= 0.658  kl= 0.0089  grad=   0.5  stopped=0  lvl=0  sps=68
+  step= 424,192  reward=     0.6  on_track=100.0%  ev= 0.658  kl= 0.0089  grad=   0.5  stopped=0  lvl=0  sps=68
+  step= 425,104  reward=     0.5  on_track=100.0%  ev= 0.658  kl= 0.0089  grad=   0.5  stopped=0  lvl=0  sps=68
+  step= 425,984  reward=     0.5  on_track=100.0%  ev= 0.604  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 441,944  reward=     0.6  on_track=100.0%  ev= 0.604  kl= 0.0065  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 444,816  reward=     0.5  on_track=100.0%  ev= 0.362  kl= 0.0084  grad=   0.4  stopped=0  lvl=0  sps=67
+  step= 449,104  reward=     0.5  on_track=100.0%  ev= 0.362  kl= 0.0084  grad=   0.4  stopped=0  lvl=0  sps=67
+  step= 454,400  reward=     0.4  on_track=100.0%  ev= 0.362  kl= 0.0084  grad=   0.4  stopped=0  lvl=0  sps=67
+
+======================================================================
+  FAIL  450k check at step 454,400
+  FAIL  episode/reward 0.4 < 10
+  WARN  explained_variance 0.362 < 0.9 (watching, will act if still low next check)
+
+  Fix — kill train.py then run:
+    python train.py --resume checkpoints\ppo_step00262144_lvl00.pt --num-envs 8 --compile --checkpoint-interval 250000 --ent-coef-start 0.02
+======================================================================
+
+  step= 472,192  reward=     0.5  on_track=100.0%  ev= 0.608  kl= 0.0074  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 473,104  reward=     0.5  on_track=100.0%  ev= 0.608  kl= 0.0074  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 475,136  reward=     0.5  on_track=100.0%  ev= 0.621  kl= 0.0083  grad=   0.4  stopped=0  lvl=0  sps=67
+  step= 489,944  reward=     0.4  on_track=100.0%  ev= 0.621  kl= 0.0083  grad=   0.4  stopped=0  lvl=0  sps=67
+  step= 496,192  reward=     0.5  on_track=100.0%  ev= 0.784  kl= 0.0082  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 497,104  reward=     0.5  on_track=100.0%  ev= 0.784  kl= 0.0082  grad=   0.5  stopped=0  lvl=0  sps=67
+  step= 513,944  reward=     0.6  on_track=100.0%  ev= 0.921  kl= 0.0112  grad=   0.4  stopped=0  lvl=0  sps=67
+
+======================================================================
+  FAIL  500k check at step 513,944
+  FAIL  episode/reward 0.6 < 20
+
+  Fix — kill train.py then run:
+    python train.py --resume checkpoints\ppo_step00507904_lvl00.pt --num-envs 8 --compile --checkpoint-interval 250000 --ent-coef-start 0.02
+======================================================================
+
+  step= 520,192  reward=     0.6  on_track=100.0%  ev= 0.921  kl= 0.0112  grad=   0.4  stopped=0  lvl=0  sps=67
+  step= 524,288  reward=     0.6  on_track=100.0%  ev= 0.777  kl= 0.0086  grad=   0.3  stopped=0  lvl=0  sps=67

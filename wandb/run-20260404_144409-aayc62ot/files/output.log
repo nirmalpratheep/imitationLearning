@@ -1,0 +1,9 @@
+torch.compile enabled
+Model: 624,325 parameters  |  Device: cpu  |  Envs: 8
+Total steps : 5,000,000
+Rollout     : 2048 steps x 8 envs = 16384 per update  |  Minibatch: 256  |  Epochs: 4
+Curriculum  : threshold=30.0  window=50  replay=0.3
+Frontier    : track 1 'Wide Oval'
+W&B         : https://wandb.ai/nirmalpratheep-self/curriculum-car-racer/runs/aayc62ot
+      Step  Track  Name                      SPS       KL  Entropy   PG loss  VF loss
+----------------------------------------------------------------------------------
