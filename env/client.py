@@ -12,7 +12,7 @@ Sync usage:
         result = client.step(DriveAction(accel=1.0, steer=0.0))
 """
 
-from openenv.core import EnvClient
+from env._openenv_compat import EnvClient
 from .models import DriveAction, RaceObservation
 
 

@@ -57,6 +57,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
+from torch.amp import autocast, GradScaler
 import wandb
 
 # ── Headless pygame — must come before any game/env import ───────────────────
@@ -93,7 +94,7 @@ def parse_args():
     # PPO
     g = p.add_argument_group("PPO")
     g.add_argument("--ppo-epochs",     type=int,   default=4)
-    g.add_argument("--minibatch-size", type=int,   default=256)
+    g.add_argument("--minibatch-size", type=int,   default=1024)
     g.add_argument("--lr",             type=float, default=3e-4)
     g.add_argument("--lr-min",         type=float, default=1e-5,
                    help="Final LR after linear decay")
@@ -197,6 +198,15 @@ def obs_to_tensors(obs, device: torch.device):
                .to(device))
     scalars = torch.tensor(obs.scalars, dtype=torch.float32, device=device)
     return img, scalars
+
+
+def obs_list_to_arrays(obs_list):
+    """Batch-convert obs_list → numpy float32 arrays (CPU only, no GPU allocation).
+    Returns imgs (N, 3, H, W) float32 and scalars (N, 7) float32."""
+    imgs = np.stack([obs.image for obs in obs_list], axis=0)          # (N, H, W, 3) uint8
+    imgs = imgs.transpose(0, 3, 1, 2).astype(np.float32) / 255.0     # (N, 3, H, W) float32
+    scas = np.array([obs.scalars for obs in obs_list], dtype=np.float32)  # (N, 7)
+    return imgs, scas
 
 
 def explained_variance(values: torch.Tensor, returns: torch.Tensor) -> float:
@@ -303,7 +313,11 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = True
+    if args.device == "cuda":
+        torch.backends.cudnn.benchmark     = True
+        torch.backends.cudnn.deterministic = False
+    else:
+        torch.backends.cudnn.deterministic = True
     device = torch.device(args.device)
 
     N = args.num_envs   # number of parallel environments
@@ -338,8 +352,15 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, eps=1e-5)
 
     if ckpt:
-        model.load_state_dict(ckpt["model"])
+        # Load on plain (uncompiled) model so key names always match
+        state = ckpt["model"]
+        # Strip _orig_mod. prefix if checkpoint was saved from a compiled model
+        if any(k.startswith("_orig_mod.") for k in state):
+            state = {k.replace("_orig_mod.", ""): v for k, v in state.items()}
+        model.load_state_dict(state)
         optimizer.load_state_dict(ckpt["optimizer"])
+
+    scaler = GradScaler('cuda') if device.type == 'cuda' else None
 
     if args.compile:
         try:
@@ -368,14 +389,21 @@ def main():
                                           maxlen=args.window)
 
     # ── Rollout storage — shape (T, N, …) pre-allocated on CPU ───────────────
-    T             = args.rollout_steps
-    buf_imgs      = torch.zeros(T, N, 3, 64, 64)
-    buf_scalars   = torch.zeros(T, N, 7)
-    buf_actions   = torch.zeros(T, N, 2)
-    buf_logps     = torch.zeros(T, N)
-    buf_rewards   = torch.zeros(T, N)
-    buf_dones     = torch.zeros(T, N)
-    buf_values    = torch.zeros(T, N)
+    T    = args.rollout_steps
+    _pin = device.type == "cuda"
+
+    def _buf(*shape):
+        t = torch.zeros(*shape)
+        return t.pin_memory() if _pin else t
+
+    # Image/scalar stored as numpy — avoids D2H round-trip during collection
+    buf_imgs_np    = np.zeros((T, N, 3, 64, 64), dtype=np.float32)
+    buf_scalars_np = np.zeros((T, N, 7),         dtype=np.float32)
+    buf_actions   = _buf(T, N, 2)
+    buf_logps     = _buf(T, N)
+    buf_rewards   = _buf(T, N)
+    buf_dones     = _buf(T, N)
+    buf_values    = _buf(T, N)
 
     # ── Per-env episode state ─────────────────────────────────────────────────
     envs          = [builder.next_env() for _ in range(N)]
@@ -436,15 +464,18 @@ def main():
         model.eval()
 
         for step in range(T):
-            # Batch inference across all N envs
-            imgs = torch.stack([obs_to_tensors(obs_list[n], device)[0] for n in range(N)])
-            scas = torch.stack([obs_to_tensors(obs_list[n], device)[1] for n in range(N)])
+            # Batch obs → numpy (CPU only), then single H2D upload for inference
+            imgs_np, scas_np = obs_list_to_arrays(obs_list)
+            imgs = torch.from_numpy(imgs_np).to(device, non_blocking=True)
+            scas = torch.from_numpy(scas_np).to(device, non_blocking=True)
 
             with torch.no_grad():
-                actions, logps, _, values = model.get_action_and_value(imgs, scas)
+                with autocast(device_type=device.type, enabled=(scaler is not None)):
+                    actions, logps, _, values = model.get_action_and_value(imgs, scas)
 
-            buf_imgs[step]    = imgs.cpu()
-            buf_scalars[step] = scas.cpu()
+            # Store numpy directly — no D2H round-trip
+            buf_imgs_np[step]    = imgs_np
+            buf_scalars_np[step] = scas_np
             buf_actions[step] = actions.cpu()
             buf_logps[step]   = logps.cpu()
             buf_values[step]  = values.squeeze(-1).cpu()
@@ -561,9 +592,11 @@ def main():
 
         # ── Compute advantages with GAE (vectorised over N envs) ─────────────
         with torch.no_grad():
-            imgs_next = torch.stack([obs_to_tensors(obs_list[n], device)[0] for n in range(N)])
-            scas_next = torch.stack([obs_to_tensors(obs_list[n], device)[1] for n in range(N)])
-            next_values = model.get_value(imgs_next, scas_next).squeeze(-1).cpu()  # (N,)
+            imgs_next_np, scas_next_np = obs_list_to_arrays(obs_list)
+            imgs_next = torch.from_numpy(imgs_next_np).to(device, non_blocking=True)
+            scas_next = torch.from_numpy(scas_next_np).to(device, non_blocking=True)
+            with autocast(device_type=device.type, enabled=(scaler is not None)):
+                next_values = model.get_value(imgs_next, scas_next).squeeze(-1).cpu()  # (N,)
             next_dones  = torch.tensor([float(obs_list[n].done) for n in range(N)])
 
         advantages = torch.zeros(T, N)
@@ -588,13 +621,16 @@ def main():
         model.train()
 
         TN     = T * N
-        b_img  = buf_imgs.view(TN, 3, 64, 64).to(device)
-        b_sca  = buf_scalars.view(TN, 7).to(device)
-        b_act  = buf_actions.view(TN, 2).to(device)
-        b_logp = buf_logps.view(TN).to(device)
-        b_adv  = advantages.view(TN).to(device)
-        b_ret  = returns.view(TN).to(device)
-        b_val  = buf_values.view(TN).to(device)
+        # Single pinned H2D transfer for image/scalar buffers
+        b_img  = (torch.from_numpy(buf_imgs_np.reshape(TN, 3, 64, 64))
+                  .pin_memory().to(device, non_blocking=True))
+        b_sca  = (torch.from_numpy(buf_scalars_np.reshape(TN, 7))
+                  .pin_memory().to(device, non_blocking=True))
+        b_act  = buf_actions.view(TN, 2).to(device, non_blocking=True)
+        b_logp = buf_logps.view(TN).to(device, non_blocking=True)
+        b_adv  = advantages.view(TN).to(device, non_blocking=True)
+        b_ret  = returns.view(TN).to(device, non_blocking=True)
+        b_val  = buf_values.view(TN).to(device, non_blocking=True)
 
         # Normalise advantages for stable updates
         b_adv  = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
@@ -613,35 +649,43 @@ def main():
             for start in range(0, TN, args.minibatch_size):
                 mb = indices[start : start + args.minibatch_size]
 
-                _, new_logp, ent, new_val = model.get_action_and_value(
-                    b_img[mb], b_sca[mb], b_act[mb]
-                )
-                new_val = new_val.squeeze()
+                with autocast(device_type=device.type, enabled=(scaler is not None)):
+                    _, new_logp, ent, new_val = model.get_action_and_value(
+                        b_img[mb], b_sca[mb], b_act[mb]
+                    )
+                    new_val = new_val.squeeze()
 
-                logratio  = new_logp - b_logp[mb]
-                ratio     = logratio.exp()
+                    logratio  = new_logp - b_logp[mb]
+                    ratio     = logratio.exp()
 
-                with torch.no_grad():
-                    approx_kl = ((ratio - 1) - logratio).mean().item()
-                    clip_frac = ((ratio - 1.0).abs() > args.clip_eps).float().mean().item()
+                    with torch.no_grad():
+                        approx_kl = ((ratio - 1) - logratio).mean().item()
+                        clip_frac = ((ratio - 1.0).abs() > args.clip_eps).float().mean().item()
 
-                if approx_kl > args.target_kl:
-                    early_stopped = True
-                    break
+                    if approx_kl > args.target_kl:
+                        early_stopped = True
+                        break
 
-                mb_adv   = b_adv[mb]
-                pg_loss  = torch.max(
-                    -mb_adv * ratio,
-                    -mb_adv * ratio.clamp(1 - args.clip_eps, 1 + args.clip_eps),
-                ).mean()
-                v_loss   = 0.5 * (new_val - b_ret[mb]).pow(2).mean()
-                ent_loss = ent.mean()
-                loss     = pg_loss + args.vf_coef * v_loss - ent_now * ent_loss
+                    mb_adv   = b_adv[mb]
+                    pg_loss  = torch.max(
+                        -mb_adv * ratio,
+                        -mb_adv * ratio.clamp(1 - args.clip_eps, 1 + args.clip_eps),
+                    ).mean()
+                    v_loss   = 0.5 * (new_val - b_ret[mb]).pow(2).mean()
+                    ent_loss = ent.mean()
+                    loss     = pg_loss + args.vf_coef * v_loss - ent_now * ent_loss
 
                 optimizer.zero_grad()
-                loss.backward()
-                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                optimizer.step()
+                if scaler:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    grad_norm = nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    grad_norm = nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    optimizer.step()
 
                 pg_losses.append(pg_loss.item())
                 v_losses.append(v_loss.item())

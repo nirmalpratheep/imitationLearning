@@ -11,7 +11,7 @@ from typing import Any, Optional
 import numpy as np
 import pygame
 
-from openenv.core.env_server import Environment
+from env._openenv_compat import Environment
 
 from game.rl_splits import CarEnv
 from game.tracks import TrackDef, SCREEN_W, SCREEN_H
@@ -48,9 +48,12 @@ class RaceEnvironment(Environment[DriveAction, RaceObservation, dict]):
         self._use_image = use_image
         self._episode_id: Optional[str] = None
 
-        # Offscreen surface reused every step — allocated once
+        # Offscreen surfaces reused every step — allocated once
         if use_image:
-            self._surf = pygame.Surface((SCREEN_W, SCREEN_H))
+            self._surf    = pygame.Surface((SCREEN_W, SCREEN_H))
+            self._canvas  = pygame.Surface((_VIEW_PX, _VIEW_PX))
+            self._cropped = pygame.Surface((_VIEW_PX, _VIEW_PX))
+            self._scaled  = pygame.Surface((_OUT_PX,  _OUT_PX))
 
     # ── OpenEnv interface ────────────────────────────────────────────────────
 
@@ -109,7 +112,7 @@ class RaceEnvironment(Environment[DriveAction, RaceObservation, dict]):
 
         # 3 — crop around car, padding with grass if near screen edge
         half = _VIEW_PX // 2
-        canvas = pygame.Surface((_VIEW_PX, _VIEW_PX))
+        canvas = self._canvas
         canvas.fill(_GRASS)
         src = pygame.Rect(int(x) - half, int(y) - half, _VIEW_PX, _VIEW_PX)
         clipped = src.clip(pygame.Rect(0, 0, SCREEN_W, SCREEN_H))
@@ -124,12 +127,13 @@ class RaceEnvironment(Environment[DriveAction, RaceObservation, dict]):
         cx2, cy2 = rw // 2, rh // 2
         inner = pygame.Rect(cx2 - half, cy2 - half, _VIEW_PX, _VIEW_PX)
         inner = inner.clip(rotated.get_rect())
-        cropped = pygame.Surface((_VIEW_PX, _VIEW_PX))
+        cropped = self._cropped
         cropped.fill(_GRASS)
         cropped.blit(rotated, (inner.x - (cx2 - half), inner.y - (cy2 - half)), inner)
 
-        # 6 — scale to output size
-        scaled = pygame.transform.scale(cropped, (_OUT_PX, _OUT_PX))
+        # 6 — scale to output size (in-place into pre-allocated surface)
+        pygame.transform.scale(cropped, (_OUT_PX, _OUT_PX), self._scaled)
+        scaled = self._scaled
 
         # 7 — pygame surfarray is (W, H, 3); transpose to (H, W, 3)
         return pygame.surfarray.array3d(scaled).transpose(1, 0, 2)

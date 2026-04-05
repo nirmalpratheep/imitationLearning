@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 from pydantic import ConfigDict
-from openenv.core.env_server.types import Action, Observation
+from env._openenv_compat import Action, Observation
 
 
 class DriveAction(Action):

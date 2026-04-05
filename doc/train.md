@@ -533,6 +533,78 @@ episodes early, or spinning in place indefinitely).
 
 ---
 
+## Plateau diagnosis and fixes
+
+A plateau is when `episode/reward` and `curriculum/rolling_mean` stop improving
+for more than 100k steps. The monitor will keep passing (reward above threshold)
+but the agent is stuck in a local optimum. Three failure patterns and their fixes:
+
+### Pattern 1 — Maximum-entropy plateau (most common on Track 1)
+
+**Symptoms:**
+- `ppo/entropy` stays at ~2.84–2.90 from step 0 through 500k+ (theoretical max for 2D Gaussian)
+- `ppo/grad_norm` collapses to 0.3–0.5 (essentially zero gradient)
+- `episode/reward` flat at 0.3–0.7 (tiny step-speed rewards, never lap bonus)
+- `episode/laps` = 0 throughout
+- `curriculum/level` = 0 throughout despite hundreds of thousands of steps
+
+**What is happening:** The agent found a local optimum — stay on track, collect
+tiny per-step speed rewards, never complete a lap. The value function predicts
+~0.5 reward → advantages ≈ 0 → policy gradient ≈ 0 → nothing to learn.
+The entropy coefficient is too weak to push the policy away from this rut.
+
+**Fix — resume with:**
+```bash
+python train.py --resume <latest_checkpoint> \
+  --num-envs 8 --compile \
+  --rollout-steps 4096 \
+  --ent-coef-start 0.05 --ent-coef-end 0.005 \
+  --threshold 20 \
+  --window 30 \
+  --target-kl 0.03 \
+  --checkpoint-interval 250000
+```
+
+| Change | Why |
+|--------|-----|
+| `--rollout-steps 4096` | Each env gets 512 steps/rollout → full lap sequences visible to PPO → lap bonus reaches the update |
+| `--ent-coef-start 0.05` | 5× stronger entropy bonus forces policy away from maximum-entropy plateau |
+| `--threshold 20` | Lower curriculum gate so agent can escape Track 1 sooner |
+| `--window 30` | Shorter rolling window — recent good episodes advance curriculum faster |
+| `--target-kl 0.03` | Tighter than 0.05, prevents late-stage policy collapse |
+
+### Pattern 2 — Late-stage policy collapse
+
+**Symptoms (appear suddenly after a period of stability):**
+- `ppo/early_stopped` flips to 1 permanently
+- `ppo/grad_norm` explodes from ~0.5 to 100+
+- `episode/reward` crashes from ~0 to −1000 in a few updates
+- `episode/on_track_pct` drops from 100% to 30% or lower
+
+**What is happening:** A large gradient step pushed the policy into a bad region.
+The KL threshold (`--target-kl`) was too lenient to stop it. Once the policy
+collapses, the value function loses its calibration (EV → 0), and the gradient
+explosion self-reinforces.
+
+**Fix — resume from the checkpoint BEFORE the collapse with:**
+```bash
+python train.py --resume <checkpoint_before_collapse> \
+  --target-kl 0.02 \
+  --max-grad-norm 0.5 \
+  --lr 1e-4
+```
+
+### Pattern 3 — Curriculum stuck after advance
+
+**Symptoms:** `curriculum/level` advances once then stalls for 200k+ steps.
+
+**Fix:**
+1. `--replay-frac 0.4` — more anti-forgetting replay
+2. `--threshold` × 0.8 — lower the bar for the new track
+3. `--ent-coef-start 0.03` — more exploration on the harder track
+
+---
+
 ## Hyperparameter tuning
 
 Only change one thing at a time. The default values are well-calibrated for
@@ -545,7 +617,7 @@ this environment — most runs do not need tuning.
 → The agent is stuck. Options in order of preference:
   1. Increase `--replay-frac` to `0.4` (more anti-forgetting)
   2. Reduce `--threshold` by 20% for the current tier
-  3. Increase `--ent-coef-start` to `0.02` (more exploration)
+  3. Increase `--ent-coef-start` to `0.05` (more exploration)
 
 **If `ppo/explained_variance` stays below 0.1 after 500 k steps**
 → Value function is not learning. Increase `--vf-coef` to `1.0`.
