@@ -279,7 +279,7 @@ def run_validation(
 def save_checkpoint(path: str, model, optimizer, global_step: int,
                     curriculum_level: int, args, reward_window, episode_num,
                     sampler_idx, sampler_rewards, sampler_crashes=None,
-                    wandb_run_id=None):
+                    sampler_laps=None, wandb_run_id=None):
     torch.save({
         "step":             global_step,
         "curriculum_level": curriculum_level,
@@ -292,6 +292,7 @@ def save_checkpoint(path: str, model, optimizer, global_step: int,
         "sampler_idx":      sampler_idx,
         "sampler_rewards":  list(sampler_rewards),
         "sampler_crashes":  list(sampler_crashes) if sampler_crashes is not None else [],
+        "sampler_laps":     list(sampler_laps)    if sampler_laps    is not None else [],
         "wandb_run_id":     wandb_run_id,
     }, path)
 
@@ -397,6 +398,8 @@ def main():
         builder._sampler._rewards = deque(ckpt["sampler_rewards"],
                                           maxlen=args.window)
         builder._sampler._crashes = deque(ckpt.get("sampler_crashes", []),
+                                          maxlen=args.window)
+        builder._sampler._laps    = deque(ckpt.get("sampler_laps", []),
                                           maxlen=args.window)
 
     # ── Rollout storage — shape (T, N, …) pre-allocated on CPU ───────────────
@@ -562,11 +565,13 @@ def main():
                         "curriculum/threshold":      threshold,
                         "curriculum/is_replay":      int(is_replay[n]),
                         "curriculum/crashes_per_ep": builder._sampler.rolling_crashes,
+                        "curriculum/laps_per_ep":    builder._sampler.rolling_laps,
                         "curriculum/crash_free":     int(all(c == 0 for c in builder._sampler._crashes)),
+                        "curriculum/all_lapped":     int(all(l >= 1 for l in builder._sampler._laps)),
                     }, step=global_step)
 
                     # ── Curriculum advancement check ─────────────────────────
-                    advanced = builder.record(ep_reward[n], ep_crashes[n])
+                    advanced = builder.record(ep_reward[n], ep_crashes[n], ep_laps[n])
 
                     if advanced:
                         new_frontier = builder._sampler.frontier_track
@@ -808,6 +813,7 @@ def main():
                 builder._sampler._idx,
                 list(builder._sampler._rewards),
                 sampler_crashes=list(builder._sampler._crashes),
+                sampler_laps=list(builder._sampler._laps),
                 wandb_run_id=run.id,
             )
             wandb.save(ckpt_path)
@@ -826,6 +832,7 @@ def main():
         builder._sampler._idx,
         list(builder._sampler._rewards),
         sampler_crashes=list(builder._sampler._crashes),
+        sampler_laps=list(builder._sampler._laps),
         wandb_run_id=run.id,
     )
     wandb.save(final)

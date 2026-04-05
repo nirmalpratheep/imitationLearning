@@ -200,7 +200,11 @@ class CarEnv:
         self._x     = float(self.track.start_pos[0])
         self._y     = float(self.track.start_pos[1])
         self._angle = float(self.track.start_angle)
-        self._speed = 0.0
+        # Start at 40% max speed so the agent immediately experiences motion
+        # and receives a meaningful speed reward from step 0.
+        # A zero-start policy converges to near-zero speed because brake
+        # force (0.22) > accel force (0.13), so random actions decelerate.
+        self._speed = self.track.max_speed * 0.4
         self._angle_delta    = 0.0
         self._prev_side      = self.track.gate_side(self._x, self._y)
         self._laps           = 0
@@ -404,6 +408,7 @@ class CurriculumSampler:
         self._idx         = 0              # current frontier index
         self._rewards     = deque(maxlen=window)
         self._crashes     = deque(maxlen=window)   # crashes per episode
+        self._laps        = deque(maxlen=window)   # laps completed per episode
 
     @property
     def current_level(self):
@@ -427,42 +432,39 @@ class CurriculumSampler:
             return random.choice(self.mastered)
         return self.frontier_track
 
-    def record(self, episode_reward, episode_crashes=0):
-        """Call after each episode with the total reward and crash count."""
+    def record(self, episode_reward, episode_crashes=0, episode_laps=0):
+        """Call after each episode with the total reward, crash count, and lap count."""
         self._rewards.append(episode_reward)
         self._crashes.append(episode_crashes)
+        self._laps.append(episode_laps)
 
     def should_advance(self):
         """
-        True when the agent has mastered the frontier track.
+        True when every episode in the window completed ≥1 lap with zero crashes.
 
-        Two conditions must BOTH hold over the last `window` episodes:
+        This directly measures mastery: the agent can reliably drive a full lap
+        cleanly, regardless of reward scale or reward function changes.
 
-          1. Crash-free window — every episode had zero crashes.
-             This is the primary mastery signal: the agent reliably stays on
-             track regardless of reward scale.
-
-          2. Reward threshold — rolling mean >= threshold × complexity.
-             Guards against advancing on a lucky crash-free streak at low speed
-             (e.g. slowly creeping around the track without going off).
-
-        Complexity scales the threshold so the same base value means
-        "solid driving" on both wide easy ovals and tight hard tracks.
+        The reward threshold acts as a secondary guard against a slow creep
+        that technically completes a lap but at negligible speed.
         """
         if self._idx >= len(self.tracks) - 1:
             return False
         if len(self._rewards) < self.window:
             return False
-        crash_free = all(c == 0 for c in self._crashes)
-        effective  = self.threshold * self.frontier_track.complexity
-        return crash_free and statistics.mean(self._rewards) >= effective
+        all_lapped    = all(l >= 1 for l in self._laps)
+        all_clean     = all(c == 0 for c in self._crashes)
+        effective     = self.threshold * self.frontier_track.complexity
+        reward_ok     = statistics.mean(self._rewards) >= effective
+        return all_lapped and all_clean and reward_ok
 
     def advance(self):
-        """Move to the next track. Clears the rolling reward and crash buffers."""
+        """Move to the next track. Clears all rolling buffers."""
         if self._idx < len(self.tracks) - 1:
             self._idx += 1
             self._rewards.clear()
             self._crashes.clear()
+            self._laps.clear()
             return True
         return False
 
@@ -470,6 +472,11 @@ class CurriculumSampler:
     def rolling_crashes(self):
         """Mean crashes per episode over the current window."""
         return statistics.mean(self._crashes) if self._crashes else float("nan")
+
+    @property
+    def rolling_laps(self):
+        """Mean laps per episode over the current window."""
+        return statistics.mean(self._laps) if self._laps else float("nan")
 
     def status(self):
         mean     = statistics.mean(self._rewards) if self._rewards else float("nan")
