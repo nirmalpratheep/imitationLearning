@@ -112,3 +112,20 @@ Monitor started — polling every 60s
 
   step= 520,192  reward=     0.6  on_track=100.0%  ev= 0.921  kl= 0.0112  grad=   0.4  stopped=0  lvl=0  sps=67
   step= 524,288  reward=     0.6  on_track=100.0%  ev= 0.777  kl= 0.0086  grad=   0.3  stopped=0  lvl=0  sps=67
+Monitor started â€” polling every 60s
+      Step    Reward   OnTrack      EV       KL   GradN  Stop  Lvl    SPS
+------------------------------------------------------------------------------------------
+  step=  65,536  reward=  -171.7  on_track= 84.3%  ev=-0.003  kl= 0.0039  grad=   inf  stopped=0  lvl=0  sps=1864
+
+======================================================================
+  PASS  50k check at step 65,536
+  WARN  explained_variance -0.003 < 0.5 (watching, will act if still low next check)
+  WARN  grad_norm inf > 30
+======================================================================
+
+  [waiting for wandb run to start...]
+  [waiting for wandb run to start...]
+  [waiting for wandb run to start...]
+  [waiting for wandb run to start...]
+  [waiting for wandb run to start...]
+  [waiting for wandb run to start...]

@@ -1,9 +1,0 @@
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_setup.py:_flush():81] Current SDK version is 0.25.1
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_setup.py:_flush():81] Configure stats pid to 36448
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_setup.py:_flush():81] Loading settings from environment variables
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_init.py:setup_run_log_directory():717] Logging user logs to C:\Users\ssuga\nirmalp\imitationLearning\wandb\run-20260404_143314-dz2a7vro\logs\debug.log
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to C:\Users\ssuga\nirmalp\imitationLearning\wandb\run-20260404_143314-dz2a7vro\logs\debug-internal.log
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_init.py:init():844] calling init triggers
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
-config: {'wandb_project': 'curriculum-car-racer', 'wandb_run_name': None, 'wandb_offline': False, 'total_steps': 5000000, 'rollout_steps': 2048, 'num_envs': 8, 'ppo_epochs': 4, 'minibatch_size': 256, 'lr': 0.0003, 'lr_min': 1e-05, 'gamma': 0.99, 'gae_lambda': 0.95, 'clip_eps': 0.2, 'vf_coef': 0.5, 'ent_coef_start': 0.01, 'ent_coef_end': 0.001, 'max_grad_norm': 0.5, 'target_kl': 0.02, 'threshold': 30.0, 'window': 50, 'replay_frac': 0.3, 'val_episodes': 10, 'checkpoint_interval': 500000, 'checkpoint_dir': 'checkpoints', 'resume': None, 'seed': 42, 'device': 'cpu', 'compile': True, '_wandb': {}}
-2026-04-04 14:33:14,248 INFO    MainThread:36448 [wandb_init.py:init():892] starting backend
