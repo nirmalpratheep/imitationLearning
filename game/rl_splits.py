@@ -138,7 +138,10 @@ class CarEnv:
               bleed; break-even at 5% max speed.
 
         Per step (off track)
-          - 0.1                              lane-keeping penalty
+          - 0.1 + toward_track * 0.15       base penalty + recovery gradient.
+              toward_track = velocity · direction_to_nearest_centreline_wp.
+              Steering back toward track reduces the penalty; steering further
+              away increases it — gives the agent a left/right signal off-track.
 
         Event
           - 1.0   on crash (on→off transition)
@@ -251,12 +254,25 @@ class CarEnv:
         # ── Reward ───────────────────────────────────────────────────────────
         speed_frac = self._speed / self.track.max_speed
 
-        # 1. Speed reward with time penalty — agent must keep moving.
+        # 1. On-track: speed reward with time penalty — agent must keep moving.
         #    Zero speed earns -0.01/step, full speed earns +0.19/step.
+        #    Off-track: base penalty + recovery gradient.
+        #    The recovery term rewards steering *toward* the centreline so the
+        #    agent has a signal distinguishing left vs right when off-track.
         if on:
             reward = speed_frac * 0.20 - 0.01
         else:
+            # Base off-track penalty
             reward = -0.1
+            # Recovery gradient: dot-product of velocity with direction to nearest wp.
+            # Positive when heading back toward track, negative when moving further away.
+            wp_dx = float(self._wp_x[self._wp_idx]) - self._x
+            wp_dy = float(self._wp_y[self._wp_idx]) - self._y
+            wp_dist = math.hypot(wp_dx, wp_dy) + 1e-6
+            car_vx = self._speed * math.cos(math.radians(self._angle))
+            car_vy = self._speed * math.sin(math.radians(self._angle))
+            toward_track = (car_vx * wp_dx / wp_dist + car_vy * wp_dy / wp_dist)
+            reward += toward_track * 0.15   # ±0.15 depending on direction
 
         # 2. Crash penalty (on→off transition)
         if self._was_on_track and not on:
