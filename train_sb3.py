@@ -85,22 +85,10 @@ def parse_args():
     g.add_argument("--rollout-steps", type=int,   default=2048,
                    help="Steps per env per PPO update")
     g.add_argument("--num-envs",      type=int,   default=4)
-
-    g = p.add_argument_group("PPO")
-    g.add_argument("--ppo-epochs",     type=int,   default=4)
-    g.add_argument("--minibatch-size", type=int,   default=1024)
-    g.add_argument("--lr",             type=float, default=3e-4)
-    g.add_argument("--lr-min",         type=float, default=1e-5,
-                   help="Final LR after linear decay")
-    g.add_argument("--gamma",          type=float, default=0.99)
-    g.add_argument("--gae-lambda",     type=float, default=0.95)
-    g.add_argument("--clip-eps",       type=float, default=0.2)
-    g.add_argument("--vf-coef",        type=float, default=0.5)
-    g.add_argument("--ent-coef-start", type=float, default=0.01)
-    g.add_argument("--ent-coef-end",   type=float, default=0.001,
-                   help="Entropy coef linearly annealed to this value")
-    g.add_argument("--max-grad-norm",  type=float, default=0.5)
-    g.add_argument("--target-kl",      type=float, default=0.02)
+    g.add_argument("--batch-size",    type=int,   default=64,
+                   help="Minibatch size for PPO updates (SB3 default=64; use 256-512 for speed)")
+    g.add_argument("--ppo-epochs",    type=int,   default=10,
+                   help="Passes over rollout data per update (SB3 default=10; use 4 for speed)")
 
     g = p.add_argument_group("Curriculum")
     g.add_argument("--threshold",    type=float, default=30.0)
@@ -375,13 +363,6 @@ class CurriculumWandbCallback(BaseCallback):
     # ── Called after each full rollout + PPO update ──────────────────────────
 
     def _on_rollout_end(self) -> None:
-        # Anneal entropy coefficient linearly
-        anneal_ent_coef(
-            self.model,
-            self._args.ent_coef_start,
-            self._args.ent_coef_end,
-            self._total_steps,
-        )
         # SB3 logs PPO metrics internally; mirror them with our key names + W&B step
         logger = self.model.logger
         if hasattr(logger, "name_to_value"):
@@ -398,8 +379,7 @@ class CurriculumWandbCallback(BaseCallback):
                 "ppo/clip_fraction":       lv.get("train/clip_fraction",        float("nan")),
                 "ppo/explained_variance":  lv.get("train/explained_variance",   float("nan")),
                 "ppo/learning_rate":       lv.get("train/learning_rate",        float("nan")),
-                "ppo/grad_norm":           lv.get("train/std",                  float("nan")),
-                "ppo/entropy_coef":        self.model.ent_coef,
+                "ppo/std":                 lv.get("train/std",                  float("nan")),
                 "system/steps_per_sec":    sps,
                 "system/elapsed_hours":    (time.time() - self._start_time) / 3600,
             }, step=self.num_timesteps)
@@ -453,20 +433,6 @@ class CurriculumWandbCallback(BaseCallback):
 # ─────────────────────────────────────────────────────────────────────────────
 # LR schedule (linear decay from lr to lr_min)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def make_lr_schedule(lr_start: float, lr_min: float):
-    """Returns an SB3 learning-rate schedule function (progress_remaining 1→0)."""
-    def _schedule(progress_remaining: float) -> float:
-        # progress_remaining: 1.0 at start, 0.0 at end
-        return lr_min + (lr_start - lr_min) * progress_remaining
-    return _schedule
-
-
-def anneal_ent_coef(model, ent_start: float, ent_end: float, total_steps: int) -> None:
-    """Update model.ent_coef in-place based on current training progress."""
-    progress = model.num_timesteps / max(total_steps, 1)  # 0 → 1
-    model.ent_coef = float(ent_start + (ent_end - ent_start) * progress)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
@@ -548,19 +514,14 @@ def main():
         print(f"\n  [RESUME] Loading {args.resume}")
         model = PPO.load(
             args.resume,
-            env          = vec_env,
-            device       = args.device,
-            # Override only the mutable training params (not architecture)
+            env            = vec_env,
+            device         = args.device,
             custom_objects = {
-                "learning_rate": make_lr_schedule(args.lr, args.lr_min),
-                "clip_range":    args.clip_eps,
-                "ent_coef":      make_ent_schedule(args.ent_coef_start, args.ent_coef_end),
-                "n_steps":       n_steps,
-                "n_epochs":      args.ppo_epochs,
-                "batch_size":    args.minibatch_size,
+                "n_steps":    n_steps,
+                "batch_size": args.batch_size,
+                "n_epochs":   args.ppo_epochs,
             },
         )
-        # SB3 resets num_timesteps on load; we track the offset for logging
         import re
         m = re.search(r"step(\d+)", os.path.basename(args.resume))
         if m:
@@ -568,23 +529,15 @@ def main():
         print(f"  [RESUME] Continuing from step {resume_step:,}\n")
     else:
         model = PPO(
-            policy          = "MultiInputPolicy",
-            env             = vec_env,
-            learning_rate   = make_lr_schedule(args.lr, args.lr_min),
-            n_steps         = n_steps,
-            batch_size      = args.minibatch_size,
-            n_epochs        = args.ppo_epochs,
-            gamma           = args.gamma,
-            gae_lambda      = args.gae_lambda,
-            clip_range      = args.clip_eps,
-            vf_coef         = args.vf_coef,
-            ent_coef        = args.ent_coef_start,  # annealed in callback
-            max_grad_norm   = args.max_grad_norm,
-            target_kl       = args.target_kl,
-            policy_kwargs   = policy_kwargs,
-            device          = args.device,
-            seed            = args.seed,
-            verbose         = 1,
+            policy        = "MultiInputPolicy",
+            env           = vec_env,
+            n_steps       = n_steps,
+            batch_size    = args.batch_size,
+            n_epochs      = args.ppo_epochs,
+            policy_kwargs = policy_kwargs,
+            device        = args.device,
+            seed          = args.seed,
+            verbose       = 1,
         )
 
     # Bias actor mean toward gentle forward acceleration (same as train.py)
@@ -604,8 +557,7 @@ def main():
         p.numel() for p in model.policy.parameters() if p.requires_grad
     )
     print(f"\nModel: {total_params:,} parameters  |  Device: {args.device}  |  Envs: {N}")
-    print(f"Batch : {n_steps}×{N}={n_steps*N} per update  |  Minibatch: {args.minibatch_size}  "
-          f"|  Epochs: {args.ppo_epochs}")
+    print(f"Rollout: {n_steps}×{N}={n_steps*N} transitions per update  (SB3 defaults for all PPO params)")
     print(f"Curriculum: threshold={args.threshold}  window={args.window}  "
           f"replay_frac={args.replay_frac}")
     print(f"Frontier  : {sampler.frontier_track.level} '{sampler.frontier_track.name}'")

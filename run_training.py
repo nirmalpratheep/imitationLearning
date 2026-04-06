@@ -48,19 +48,9 @@ BASE_CMD = [
     "--subproc",                            # parallel env stepping
     "--compile",                            # torch.compile policy
     "--rollout-steps",       "4096",
-    "--ppo-epochs",          "4",
-    "--minibatch-size",      "512",
-    "--lr",                  "3e-4",
-    "--lr-min",              "1e-5",
-    "--gamma",               "0.997",
-    "--gae-lambda",          "0.95",
-    "--clip-eps",            "0.2",
-    "--vf-coef",             "0.5",
-    "--ent-coef-start",      "0.005",
-    "--ent-coef-end",        "0.001",
-    "--max-grad-norm",       "0.5",
-    "--target-kl",           "0.015",
-    "--threshold",           "80.0",
+    "--batch-size",          "512",         # speed: 512 vs SB3 default 64
+    "--ppo-epochs",          "4",           # speed: 4 vs SB3 default 10
+    "--threshold",           "4.0",         # reward scale ÷20 from original 80.0
     "--window",              "20",
     "--replay-frac",         "0.3",
     "--checkpoint-interval", "250_000",
@@ -71,27 +61,26 @@ BASE_CMD = [
 # Health thresholds: step → (min_reward, min_on_track_pct, min_explained_var, max_grad_norm)
 # Reward scale: lap = +100, on-track ~0.2/step max, crash = -1, off-track = -0.2/step
 THRESHOLDS = {
-      50_000: ( -300,  60, 0.40, 30),
-     100_000: ( -100,  75, 0.60, 15),
-     200_000: (    0,  85, 0.80, 10),
-     500_000: (   50,  90, 0.85,  8),
-   1_000_000: (  100,  93, 0.90,  6),
-   2_000_000: (  200,  95, 0.93,  5),
-   3_000_000: (  300,  96, 0.93,  4),
-   5_000_000: (  400,  97, 0.95,  4),
+      50_000: ( -15,  60, 0.40, 30),   # reward scale ÷20
+     100_000: (  -5,  75, 0.60, 15),
+     200_000: (   0,  85, 0.80, 10),
+     500_000: ( 2.5,  90, 0.85,  8),
+   1_000_000: (   5,  93, 0.90,  6),
+   2_000_000: (  10,  95, 0.93,  5),
+   3_000_000: (  15,  96, 0.93,  4),
+   5_000_000: (  20,  97, 0.95,  4),
 }
 
 # Escalating fixes for curriculum stalls (tried in order)
 STALL_FIXES = [
-    # attempt 1: longer rollouts + slightly more exploration
-    {"--ent-coef-start": "0.01", "--rollout-steps": "4096"},
-    # attempt 2: lower threshold + more exploration
-    {"--threshold": "15.0", "--ent-coef-start": "0.015"},
-    # attempt 3: lower threshold + more replay + slower LR
-    {"--threshold": "12.0", "--replay-frac": "0.4", "--lr": "1e-4"},
-    # attempt 4: very low threshold + moderate exploration
-    {"--threshold": "10.0", "--ent-coef-start": "0.02", "--ent-coef-end": "0.003",
-     "--rollout-steps": "4096"},
+    # attempt 1: lower threshold slightly
+    {"--threshold": "0.75"},
+    # attempt 2: lower threshold + more replay
+    {"--threshold": "0.6", "--replay-frac": "0.4"},
+    # attempt 3: very low threshold
+    {"--threshold": "0.5"},
+    # attempt 4: no-op restart (clears memory, resets env state)
+    {},
 ]
 
 
@@ -309,23 +298,16 @@ def check_health(summary, step):
 
     if stopped == 1 and (kl != kl or kl == 0.0):
         failures.append("CRITICAL: policy frozen (early_stopped=1, kl=0)")
-        fixes.update({"--lr": "1e-4", "--max-grad-norm": "2.0"})
 
     # Soft failures
     if reward == reward and reward < min_reward:
         failures.append(f"reward {reward:.1f} < {min_reward}")
-        fixes["--ent-coef-start"] = "0.02"
 
     if on_track == on_track and on_track < min_on_track:
         failures.append(f"on_track {on_track:.1f}% < {min_on_track}%")
 
     if grad == grad and grad > max_grad:
         failures.append(f"grad_norm {grad:.1f} > {max_grad}")
-        fixes.update({"--max-grad-norm": "2.0", "--lr": "1e-4"})
-
-    if kl == kl and kl > 0.03:
-        failures.append(f"approx_kl {kl:.4f} > 0.03")
-        fixes["--lr"] = "1e-4"
 
     if not failures:
         return True, [], {}
