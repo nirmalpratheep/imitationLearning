@@ -477,22 +477,13 @@ class CurriculumSampler:
     def should_advance(self):
         """
         True when every episode in the window completed ≥1 lap with zero crashes.
-
-        This directly measures mastery: the agent can reliably drive a full lap
-        cleanly, regardless of reward scale or reward function changes.
-
-        The reward threshold acts as a secondary guard against a slow creep
-        that technically completes a lap but at negligible speed.
+        Advancement is purely crash-based — reward scale changes do not affect it.
         """
         if self._idx >= len(self.tracks) - 1:
             return False
-        if len(self._rewards) < self.window:
+        if len(self._laps) < self.window:
             return False
-        all_lapped    = all(l >= 1 for l in self._laps)
-        all_clean     = all(c == 0 for c in self._crashes)
-        effective     = self.threshold * self.frontier_track.complexity
-        reward_ok     = statistics.mean(self._rewards) >= effective
-        return all_lapped and all_clean and reward_ok
+        return all(l >= 1 for l in self._laps) and all(c == 0 for c in self._crashes)
 
     def advance(self):
         """Move to the next track. Clears all rolling buffers."""

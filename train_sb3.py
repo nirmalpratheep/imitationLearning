@@ -149,17 +149,19 @@ class RaceNetExtractor(BaseFeaturesExtractor):
 # Inference video helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _topdown_frame(race_env) -> np.ndarray:
-    """Render a 450×300 top-down view with car position + heading overlay."""
+def _game_frame(race_env) -> np.ndarray:
+    """
+    Render the full 900×600 game view — track + headlights + car —
+    exactly as it appears when watching the game on screen.
+    Returns (H, W, 3) uint8 scaled to 450×300 for manageable file size.
+    """
     import pygame
-    surf = race_env._env.track.surface.copy()
-    x   = int(race_env._env._x)
-    y   = int(race_env._env._y)
-    ang = race_env._env._angle
-    pygame.draw.circle(surf, (220, 50, 50), (x, y), 8)
-    rad = math.radians(ang)
-    tip = (int(x + 16 * math.cos(rad)), int(y + 16 * math.sin(rad)))
-    pygame.draw.line(surf, (255, 220, 0), (x, y), tip, 3)
+    from game.oval_racer import draw_headlights, draw_car
+
+    ce  = race_env._env
+    surf = ce.track.surface.copy()
+    draw_headlights(surf, ce._x, ce._y, ce._angle)
+    draw_car(surf, ce._x, ce._y, ce._angle)
     small = pygame.transform.scale(surf, (450, 300))
     return pygame.surfarray.array3d(small).transpose(1, 0, 2).copy()
 
@@ -171,21 +173,12 @@ def log_inference_videos(
     device:     torch.device,
     global_step: int,
     video_dir:  str = "inference_videos",
-    max_steps:  int = 2000,
-    frame_skip: int = 4,
+    frame_skip: int = 2,
 ) -> None:
     """
-    Run one greedy episode on every TRAIN track up to the current frontier,
-    render top-down frames, save locally as MP4, and log to W&B.
-
-    Parameters
-    ----------
-    sb3_model   : SB3 PPO model (policy used for predict())
-    builder     : CurriculumBuilder (for current_level + track list)
-    global_step : current env step count (used for filenames + W&B x-axis)
-    video_dir   : local directory for MP4 files (auto-created)
-    max_steps   : cap each episode at this many steps
-    frame_skip  : only record every Nth frame to keep file sizes manageable
+    Run one greedy episode per TRAIN track (1 lap or crash, same as training).
+    Renders the full track view with headlights and car — identical to the
+    game seen on screen. Stops as soon as obs.done.
     """
     import imageio.v3 as iio
     from game.rl_splits import _ensure_pygame
@@ -195,47 +188,46 @@ def log_inference_videos(
     os.makedirs(video_dir, exist_ok=True)
 
     sb3_model.policy.set_training_mode(False)
-    n_tracks = builder.current_level + 1
     video_logs = {}
 
-    for track in TRAIN[:n_tracks]:
+    # Only render the current frontier (highest level reached)
+    frontier_track = TRAIN[builder.current_level]
+    for track in [frontier_track]:
         track.build()
-        env = RaceEnvironment(track, max_steps=max_steps, laps_target=2, use_image=True)
+        env     = RaceEnvironment(track, max_steps=3000, laps_target=1, use_image=True)
         raw_obs = env.reset()
 
-        frames = [_topdown_frame(env)]
+        frames = [_game_frame(env)]
         step   = 0
 
-        while not raw_obs.done and step < max_steps:
-            # Build the dict observation the policy expects
+        while not raw_obs.done:
             img     = raw_obs.image.transpose(2, 0, 1).astype(np.float32) / 255.0
             scalars = np.array(raw_obs.scalars, dtype=np.float32)
-            obs_dict = {
-                "image":   img[None],      # (1, 3, 64, 64)
-                "scalars": scalars[None],  # (1, 9)
-            }
-            action, _ = sb3_model.predict(obs_dict, deterministic=True)
-            accel = float(np.clip(action[0, 0], -1.0, 1.0))
-            steer = float(np.clip(action[0, 1], -1.0, 1.0))
-            raw_obs = env.step(DriveAction(accel=accel, steer=steer))
-
+            action, _ = sb3_model.predict(
+                {"image": img[None], "scalars": scalars[None]},
+                deterministic=True,
+            )
+            raw_obs = env.step(DriveAction(
+                accel=float(np.clip(action[0, 0], -1.0, 1.0)),
+                steer=float(np.clip(action[0, 1], -1.0, 1.0)),
+            ))
             step += 1
             if step % frame_skip == 0:
-                frames.append(_topdown_frame(env))
+                frames.append(_game_frame(env))
 
-        video = np.stack(frames, axis=0)  # (T, H, W, C) uint8
+        video = np.stack(frames, axis=0)  # (T, 300, 450, 3) uint8
 
         track_slug = track.name.replace(" ", "_")
         filename   = f"step{global_step:08d}_track{track.level:02d}_{track_slug}.mp4"
-        local_path = os.path.join(video_dir, filename)
-        iio.imwrite(local_path, video, fps=20, codec="libx264", plugin="pyav")
+        iio.imwrite(os.path.join(video_dir, filename),
+                    video, fps=20, codec="libx264", plugin="pyav")
 
         key = f"inference/track_{track.level:02d}_{track_slug}"
         video_logs[key] = wandb.Video(video, fps=20, format="mp4")
 
     wandb.log({**video_logs, "global_step": global_step}, step=global_step)
     sb3_model.policy.set_training_mode(True)
-    print(f"  [VIDEO] Saved {n_tracks} video(s) to {video_dir}/")
+    print(f"  [VIDEO] Saved frontier track video to {video_dir}/")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,6 +309,25 @@ class CurriculumWandbCallback(BaseCallback):
 
             # Curriculum advancement
             advanced = self._builder.record(ep_reward, ep_crashes, ep_laps)
+
+            # ── Per-episode console stat line ─────────────────────────────
+            s         = sampler
+            win_total = len(s._laps)
+            win_clean = sum(
+                1 for l, c in zip(s._laps, s._crashes) if l >= 1 and c == 0
+            )
+            is_replay  = (track_lvl != frontier.level)
+            crash_mark = "X" if ep_crashes > 0 else "✓"
+            replay_tag = " [replay]" if is_replay else ""
+            print(
+                f"  Ep {self._episode_count:>5}  "
+                f"Lvl {self._builder.current_level}/{len(TRAIN)-1}  "
+                f"Track {track_lvl:>2} {track_name:<22}{replay_tag}"
+                f"  {crash_mark}  "
+                f"clean {win_clean:>3}/{s.window}  "
+                f"r={ep_reward:>7.2f}  len={ep_length:>4}",
+                flush=True,
+            )
             if advanced:
                 new_frontier = sampler.frontier_track
                 new_level    = self._builder.current_level
@@ -401,8 +412,8 @@ class CurriculumWandbCallback(BaseCallback):
         if self.num_timesteps >= self._next_video:
             vi = getattr(self._args, "video_interval", 25_000)
             vd = getattr(self._args, "video_dir", "inference_videos")
-            print(f"\n  [VIDEO] Rendering inference videos for "
-                  f"{self._builder.current_level + 1} track(s)…")
+            print(f"\n  [VIDEO] Rendering inference video for frontier track "
+                  f"{self._builder._sampler.frontier_track.name}…")
             try:
                 log_inference_videos(
                     sb3_model   = self.model,
