@@ -13,4 +13,6 @@ dependencies = [
     "openenv>=0.1.13",
     "imageio>=2.35.0",
     "av>=14.0.0",
+    "stable-baselines3[extra]>=2.3.0",
+    "gymnasium>=0.29.0",
 ]

@@ -42,11 +42,9 @@ METRIC_CHECK_EVERY = 50_000  # check health thresholds at these boundaries
 #   - window 20: faster advancement decisions (still requires 20 consecutive
 #     clean-lap episodes)
 BASE_CMD = [
-    sys.executable, "train.py",
+    sys.executable, "train_sb3.py",
     "--total-steps",         "10_000_000",
     "--num-envs",            "8",
-    "--subproc",
-    "--compile",
     "--rollout-steps",       "4096",
     "--ppo-epochs",          "4",
     "--minibatch-size",      "512",
@@ -63,9 +61,9 @@ BASE_CMD = [
     "--threshold",           "80.0",
     "--window",              "20",
     "--replay-frac",         "0.3",
-    "--video-interval",      "25_000",
     "--checkpoint-interval", "250_000",
     "--keep-checkpoints",    "5",
+    "--video-interval",      "25_000",
 ]
 
 # Health thresholds: step → (min_reward, min_on_track_pct, min_explained_var, max_grad_norm)
@@ -236,6 +234,10 @@ def read_summary(path):
 
 
 def latest_checkpoint():
+    # SB3 checkpoints (.zip) take priority; fall back to legacy .pt files
+    pts = sorted(glob.glob("checkpoints/ppo_sb3_step*.zip"))
+    if pts:
+        return pts[-1]
     pts = sorted(glob.glob("checkpoints/ppo_step*.pt"))
     return pts[-1] if pts else None
 

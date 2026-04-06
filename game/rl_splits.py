@@ -130,19 +130,19 @@ class CarEnv:
           accel  > 0 → accelerate,  < 0 → brake
           steer  > 0 → right,        < 0 → left
 
-    Reward — simple:
+    Reward — matches RL-CarNavigationAgent/citymap_assignment.py:
 
-        Per step (on track)
-          + progress_per_wp * advance - 0.05   forward progress minus time penalty
-          + accel * 0.05                        throttle bonus (go forward, not backward)
-          - |steer| * 0.02                      steering cost (straight > turning)
-              Net effect: full throttle straight ahead is best; spinning is worst.
+        Per step
+          - 0.1                   base step penalty (efficiency pressure)
+          + (1+wp_cos)/2 * 20     heading reward when advancing waypoints
+                                  (≈ +20 when aimed straight at next waypoint)
+          - 10                    distance penalty when moving backward through
+                                  waypoints (moving away from target)
 
         Terminal (episode ends immediately)
-          - 100   off track → done.  The agent must learn from rays/image to
-                  steer away from walls before crossing the boundary.
+          - 100   off track → done
           - 100   car leaves screen bounds
-          + 100   lap completed
+          + 100   lap completed (target reached)
 
         Complexity (track.complexity) scales the curriculum threshold only.
 
@@ -240,12 +240,21 @@ class CarEnv:
         self._lap_prev_y  = self._y
 
         # ── Reward ───────────────────────────────────────────────────────────
+        #
+        # Modelled after citymap_assignment.py (RL-CarNavigationAgent):
+        #
+        #   reward = -0.1                   step penalty (encourages efficiency)
+        #   crash  → reward = -100, done    heavy penalty for leaving track
+        #   lap    → reward += 100          target-reached bonus
+        #   progress toward next waypoint   heading reward  (≤ +20 per step)
+        #   moving away from waypoints      distance penalty  (-10)
+        #
+        reward = -0.1  # base step penalty (discourages time-wasting)
 
-        # Off-track → episode over, heavy penalty.
-        # The agent learns to read rays/image BEFORE crossing the boundary.
+        # Crash: off-track → terminal, heavy penalty
         if not on:
             self._crash_count += 1
-            return self._obs(), -10.0, True, {
+            return self._obs(), -100.0, True, {
                 "lap":           self._laps,
                 "on_track":      False,
                 "step":          self._step,
@@ -254,8 +263,7 @@ class CarEnv:
                 "out_of_bounds": False,
             }
 
-        # Waypoint progress minus time penalty.
-        # Spinning in place → diff=0 → reward = -0.05/step (must move forward).
+        # Waypoint progress
         new_wp = self._nearest_wp(self._x, self._y)
         diff = new_wp - self._wp_idx
         n = self._n_wps
@@ -263,26 +271,27 @@ class CarEnv:
             diff -= n
         elif diff < -n // 2:
             diff += n
-        # Simple directional reward: +1 if moving toward next waypoint, -1 if wrong way.
-        # Accel is fixed at 1.0 externally so the car always moves — the only choice
-        # is steering direction.  Steering has no cost; only direction matters.
+
         if diff > 0:
-            reward = 1.0
+            # Heading reward: scaled by how well the car is aimed at the next
+            # waypoint (wp_cos ≈ 1 = straight ahead, 0 = perpendicular).
+            # Maps wp_cos from [-1, 1] → [0, 1], then scales to [0, 20].
+            # Equivalent to (1.0 - normalised_distance_to_target) * 20 in ref.
+            obs_now = self._obs()
+            wp_cos  = obs_now[8]          # index 8: cos of angle to next waypoint
+            reward += (1.0 + wp_cos) / 2.0 * 20.0
         elif diff < 0:
-            reward = -1.0
-        else:
-            reward = 0.0
+            reward -= 10.0   # distance penalty: moving away from target waypoints
         self._wp_idx = new_wp
 
-        # Lap completion — requires the car to have physically traveled most of the
-        # track since the last lap. This blocks the shortcut where the agent reverses
-        # a few steps to get behind the gate, then drives forward for an instant +100.
+        # Lap completion — requires the car to have physically traveled most of
+        # the track since the last lap (anti-shortcut gate).
         lap_done = (self._prev_side < -5.0 and curr_side >= 0.0
                     and self._speed > 0.3
                     and self._lap_dist >= self.track.optimal_dist * 0.8)
         if lap_done:
             self._laps    += 1
-            reward        += 100.0
+            reward        += 100.0   # target-reached bonus
             self._lap_dist = 0.0
             self._lap_prev_x = self._x
             self._lap_prev_y = self._y
@@ -291,9 +300,11 @@ class CarEnv:
 
         out_of_bounds = not (0 <= self._x < 900 and 0 <= self._y < 600)
         if out_of_bounds:
-            reward = -10.0
+            reward = -100.0
 
-        done = out_of_bounds  # only crash/OOB ends the episode; no step/lap limit
+        done = (out_of_bounds
+                or self._laps >= self.laps_target
+                or self._step >= self.max_steps)
 
         return self._obs(), reward, done, {
             "lap":           self._laps,
