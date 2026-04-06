@@ -7,20 +7,28 @@ Observation space: Dict
 
 Action space: Box(-1.0, 1.0, (2,), float32) — [accel, steer]
 
-The env samples its next track from the shared CurriculumSampler on each reset,
-so curriculum advancement (done in the main-process callback) is automatically
-picked up by all DummyVecEnv workers without any IPC.
+Supports two parallelism modes:
+
+  DummyVecEnv  (default, --num-envs N)
+    All envs live in the main process and share one CurriculumSampler.
+    Curriculum advancement is reflected immediately at every reset().
+
+  SubprocVecEnv  (--subproc)
+    Each env runs in its own subprocess (parallel env stepping).
+    Sampler cannot be shared across processes, so each env tracks a
+    `frontier_level` int that the main-process callback syncs via
+    vec_env.set_attr('frontier_level', new_level) after each advance.
 """
 
 from __future__ import annotations
 
+import random
 from typing import Optional, Dict, Any, Tuple
 
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from game.rl_splits import CurriculumSampler
 from env.models import DriveAction
 
 
@@ -30,31 +38,39 @@ class RaceGymEnv(gym.Env):
 
     Parameters
     ----------
-    sampler     : shared CurriculumSampler — controls which track is sampled
-    max_steps   : episode step limit (passed to RaceEnvironment)
-    laps_target : episode ends after this many laps
+    sampler        : shared CurriculumSampler (DummyVecEnv mode).
+                     Pass None for SubprocVecEnv mode.
+    frontier_level : current curriculum frontier index (SubprocVecEnv mode).
+                     Updated externally via vec_env.set_attr().
+    replay_frac    : fraction of episodes replayed from already-mastered tracks.
+    max_steps      : episode step limit
+    laps_target    : episode ends after this many laps
     """
 
     metadata = {"render_modes": []}
 
     def __init__(
         self,
-        sampler: CurriculumSampler,
+        sampler=None,
+        frontier_level: int = 0,
+        replay_frac: float = 0.3,
         max_steps: int = 3000,
         laps_target: int = 1,
     ):
         super().__init__()
-        self._sampler = sampler
-        self._max_steps = max_steps
-        self._laps_target = laps_target
+        self._sampler       = sampler
+        self.frontier_level = frontier_level   # writable via set_attr in subprocess mode
+        self._replay_frac   = replay_frac
+        self._max_steps     = max_steps
+        self._laps_target   = laps_target
         self._race_env: Optional[Any] = None
         self._current_track: Optional[Any] = None
 
         # Episode accumulators
         self._ep_reward: float = 0.0
-        self._ep_length: int = 0
-        self._ep_crashes: int = 0
-        self._ep_laps: int = 0
+        self._ep_length: int   = 0
+        self._ep_crashes: int  = 0
+        self._ep_laps: int     = 0
         self._ep_on_track: int = 0
 
         self.observation_space = spaces.Dict({
@@ -75,21 +91,20 @@ class RaceGymEnv(gym.Env):
     ) -> Tuple[Dict[str, np.ndarray], Dict]:
         super().reset(seed=seed)
 
-        # Lazy import keeps the worker subprocess headless
+        # Lazy import keeps subprocess workers headless
         from env.environment import RaceEnvironment  # noqa: PLC0415
 
-        track = self._sampler.sample()
+        track = self._sample_track()
         track.build()
         self._race_env = RaceEnvironment(
             track, self._max_steps, self._laps_target, use_image=True
         )
         self._current_track = track
 
-        # Reset episode accumulators
-        self._ep_reward = 0.0
-        self._ep_length = 0
-        self._ep_crashes = 0
-        self._ep_laps = 0
+        self._ep_reward   = 0.0
+        self._ep_length   = 0
+        self._ep_crashes  = 0
+        self._ep_laps     = 0
         self._ep_on_track = 0
 
         raw = self._race_env.reset()
@@ -122,16 +137,12 @@ class RaceGymEnv(gym.Env):
         }
 
         if terminated:
-            on_track_pct = (
-                100.0 * self._ep_on_track / max(self._ep_length, 1)
-            )
-            # SB3 / RecordEpisodeStatistics-compatible episode dict
+            on_track_pct = 100.0 * self._ep_on_track / max(self._ep_length, 1)
             info["episode"] = {
                 "r": self._ep_reward,
                 "l": self._ep_length,
                 "t": 0.0,
             }
-            # Extra fields for curriculum callback
             info["episode_reward"]  = self._ep_reward
             info["episode_crashes"] = self._ep_crashes
             info["episode_laps"]    = self._ep_laps
@@ -139,10 +150,28 @@ class RaceGymEnv(gym.Env):
 
         return self._to_obs(raw), reward, terminated, truncated, info
 
+    # ── Track sampling ────────────────────────────────────────────────────────
+
+    def _sample_track(self):
+        """
+        DummyVecEnv  → delegate to the shared CurriculumSampler.
+        SubprocVecEnv → use frontier_level + replay_frac locally.
+        """
+        if self._sampler is not None:
+            return self._sampler.sample()
+
+        # Subprocess mode: replicate the sampler's replay logic locally.
+        from game.rl_splits import TRAIN  # noqa: PLC0415
+        fl = max(0, min(self.frontier_level, len(TRAIN) - 1))
+        if fl > 0 and random.random() < self._replay_frac:
+            idx = random.randint(0, fl - 1)   # replay a mastered track
+        else:
+            idx = fl                           # train on the frontier
+        return TRAIN[idx]
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _to_obs(self, raw) -> Dict[str, np.ndarray]:
-        # Image: (H, W, C) uint8 → (C, H, W) float32 normalised
-        img = raw.image.transpose(2, 0, 1).astype(np.float32) / 255.0
+        img     = raw.image.transpose(2, 0, 1).astype(np.float32) / 255.0
         scalars = np.array(raw.scalars, dtype=np.float32)
         return {"image": img, "scalars": scalars}

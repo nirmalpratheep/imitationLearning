@@ -119,8 +119,11 @@ def parse_args():
     g.add_argument("--seed",           type=int, default=42)
     g.add_argument("--device",         default="cuda" if torch.cuda.is_available() else "cpu")
     g.add_argument("--subproc",        action="store_true",
-                   help="Use SubprocVecEnv (parallel subprocesses). "
-                        "Note: curriculum state is managed in the main process.")
+                   help="Use SubprocVecEnv — each env in its own subprocess for "
+                        "parallel stepping. Curriculum level is synced to workers "
+                        "after each advance. Recommended for GPU runs.")
+    g.add_argument("--compile",        action="store_true",
+                   help="torch.compile the policy network (~20%% faster GPU inference)")
     g.add_argument("--video-interval", type=int, default=25_000,
                    help="Log inference videos to W&B every N global steps (0 = disabled)")
     g.add_argument("--video-dir",      default="inference_videos")
@@ -328,15 +331,23 @@ class CurriculumWandbCallback(BaseCallback):
             advanced = self._builder.record(ep_reward, ep_crashes, ep_laps)
             if advanced:
                 new_frontier = sampler.frontier_track
+                new_level    = self._builder.current_level
                 print(
                     f"\n\n  > CURRICULUM ADVANCE ->  "
                     f"Track {new_frontier.level} '{new_frontier.name}'  "
-                    f"[level {self._builder.current_level}/{len(TRAIN)-1}]\n"
+                    f"[level {new_level}/{len(TRAIN)-1}]\n"
                     f"    rolling_mean={rolling_mean:.2f}  threshold={threshold:.2f}\n"
                 )
+                # Sync frontier level to SubprocVecEnv workers so they start
+                # sampling from the new frontier on their next reset().
+                try:
+                    self.training_env.set_attr("frontier_level", new_level)
+                except Exception:
+                    pass  # DummyVecEnv uses shared sampler — no sync needed
+
                 wandb.log({
                     "global_step":                  self.num_timesteps,
-                    "curriculum/level":             self._builder.current_level,
+                    "curriculum/level":             new_level,
                     "curriculum/advanced_to_level": new_frontier.level,
                     "curriculum/advanced_to_name":  new_frontier.name,
                     "curriculum/advanced_to_tier":  difficulty_of(new_frontier),
@@ -488,18 +499,31 @@ def main():
     sampler = builder._sampler
 
     # ── Vec env ───────────────────────────────────────────────────────────────
-    def _make_env():
-        """Factory that closes over the shared sampler."""
-        return RaceGymEnv(sampler, max_steps=3000, laps_target=1)
-
     N = args.num_envs
+
     if args.subproc:
-        # SubprocVecEnv: each worker gets its own copy of sampler (forked).
-        # Curriculum advancement in the main process won't propagate, but the
-        # rolling window is still computed correctly in the callback.
-        vec_env = SubprocVecEnv([_make_env for _ in range(N)])
+        # SubprocVecEnv: each env runs in its own subprocess for parallel stepping.
+        # Cannot share the sampler across processes, so each env tracks a
+        # `frontier_level` int.  The callback syncs it via set_attr after each
+        # curriculum advance.
+        replay_frac = args.replay_frac
+
+        def _make_subproc_env():
+            return RaceGymEnv(
+                sampler        = None,
+                frontier_level = 0,
+                replay_frac    = replay_frac,
+                max_steps      = 3000,
+                laps_target    = 1,
+            )
+
+        vec_env = SubprocVecEnv([_make_subproc_env for _ in range(N)])
     else:
-        vec_env = DummyVecEnv([_make_env for _ in range(N)])
+        # DummyVecEnv: all envs in-process, share the sampler directly.
+        def _make_dummy_env():
+            return RaceGymEnv(sampler, max_steps=3000, laps_target=1)
+
+        vec_env = DummyVecEnv([_make_dummy_env for _ in range(N)])
 
     # ── Policy kwargs (custom extractor) ─────────────────────────────────────
     policy_kwargs = dict(
@@ -565,12 +589,20 @@ def main():
 
     # Bias actor mean toward gentle forward acceleration (same as train.py)
     with torch.no_grad():
-        actor_mean = model.policy.mlp_extractor.policy_net
-        # Walk to the final Linear layer of the policy head
         if hasattr(model.policy, "action_net"):
             model.policy.action_net.bias[0] = 0.3
 
-    total_params = sum(p.numel() for p in model.policy.parameters() if p.requires_grad)
+    # torch.compile: fuses kernels for faster GPU inference/backward
+    if args.compile:
+        try:
+            model.policy = torch.compile(model.policy, mode="reduce-overhead")
+            print("torch.compile enabled (reduce-overhead)")
+        except Exception as e:
+            print(f"torch.compile skipped: {e}")
+
+    total_params = sum(
+        p.numel() for p in model.policy.parameters() if p.requires_grad
+    )
     print(f"\nModel: {total_params:,} parameters  |  Device: {args.device}  |  Envs: {N}")
     print(f"Batch : {n_steps}×{N}={n_steps*N} per update  |  Minibatch: {args.minibatch_size}  "
           f"|  Epochs: {args.ppo_epochs}")

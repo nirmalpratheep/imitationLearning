@@ -45,6 +45,8 @@ BASE_CMD = [
     sys.executable, "train_sb3.py",
     "--total-steps",         "10_000_000",
     "--num-envs",            "8",
+    "--subproc",                            # parallel env stepping
+    "--compile",                            # torch.compile policy
     "--rollout-steps",       "4096",
     "--ppo-epochs",          "4",
     "--minibatch-size",      "512",
