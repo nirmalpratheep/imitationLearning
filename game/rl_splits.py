@@ -122,8 +122,8 @@ class CarEnv:
     Observation  (7 floats):
         [angular_velocity, speed/max_speed, ray×5]
 
-        The agent learns track direction purely from the egocentric image (CNN) and
-        ray distances — no privileged map information in the observation.
+        All from real sensors: gyroscope, speedometer, 5 proximity rays, camera image.
+        No map or waypoint information in the observation.
 
     Action  (2 floats, each clamped to [-1, 1]):
         [accel, steer]
@@ -133,25 +133,16 @@ class CarEnv:
     Reward — simple:
 
         Per step (on track)
-          + speed/max_speed * 0.20 - 0.01   speed reward minus time penalty.
-              Zero speed earns -0.01/step — the agent must move to avoid a slow
-              bleed; break-even at 5% max speed.
+          + progress_per_wp * advance - 0.05   forward progress minus time penalty
+          + accel * 0.05                        throttle bonus (go forward, not backward)
+          - |steer| * 0.02                      steering cost (straight > turning)
+              Net effect: full throttle straight ahead is best; spinning is worst.
 
-        Per step (off track)
-          - 0.1 + toward_track * 0.15       base penalty + recovery gradient.
-              toward_track = velocity · direction_to_nearest_centreline_wp.
-              Steering back toward track reduces the penalty; steering further
-              away increases it — gives the agent a left/right signal off-track.
-
-        Event
-          - 1.0   on crash (on→off transition)
-          + progress_per_wp * advance        dense forward-progress signal from
-                                             track centreline (agent does NOT see
-                                             waypoints — reward only)
-          + 100   on lap completion
-
-        Terminal
-          - 100   if car leaves screen bounds
+        Terminal (episode ends immediately)
+          - 100   off track → done.  The agent must learn from rays/image to
+                  steer away from walls before crossing the boundary.
+          - 100   car leaves screen bounds
+          + 100   lap completed
 
         Complexity (track.complexity) scales the curriculum threshold only.
 
@@ -195,7 +186,6 @@ class CarEnv:
         self._lap_dist    = 0.0
         self._lap_prev_x  = 0.0
         self._lap_prev_y  = 0.0
-        self._was_on_track = True
         self._crash_count  = 0
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -226,7 +216,6 @@ class CarEnv:
         self._lap_dist     = 0.0
         self._lap_prev_x   = self._x
         self._lap_prev_y   = self._y
-        self._was_on_track = True
         self._crash_count  = 0
         return self._obs()
 
@@ -243,58 +232,49 @@ class CarEnv:
         on        = self.track.on_track(self._x, self._y)
         curr_side = self.track.gate_side(self._x, self._y)
 
-        # Lap distance (logging only)
+        # Lap distance accumulation (logging only)
         dx = self._x - self._lap_prev_x
         dy = self._y - self._lap_prev_y
-        if on:
-            self._lap_dist += math.hypot(dx, dy)
-        self._lap_prev_x = self._x
-        self._lap_prev_y = self._y
+        self._lap_dist   += math.hypot(dx, dy)
+        self._lap_prev_x  = self._x
+        self._lap_prev_y  = self._y
 
         # ── Reward ───────────────────────────────────────────────────────────
-        speed_frac = self._speed / self.track.max_speed
 
-        # 1. On-track: speed reward with time penalty — agent must keep moving.
-        #    Zero speed earns -0.01/step, full speed earns +0.19/step.
-        #    Off-track: base penalty + recovery gradient.
-        #    The recovery term rewards steering *toward* the centreline so the
-        #    agent has a signal distinguishing left vs right when off-track.
-        if on:
-            reward = speed_frac * 0.20 - 0.01
-        else:
-            # Base off-track penalty
-            reward = -0.1
-            # Recovery gradient: dot-product of velocity with direction to nearest wp.
-            # Positive when heading back toward track, negative when moving further away.
-            wp_dx = float(self._wp_x[self._wp_idx]) - self._x
-            wp_dy = float(self._wp_y[self._wp_idx]) - self._y
-            wp_dist = math.hypot(wp_dx, wp_dy) + 1e-6
-            car_vx = self._speed * math.cos(math.radians(self._angle))
-            car_vy = self._speed * math.sin(math.radians(self._angle))
-            toward_track = (car_vx * wp_dx / wp_dist + car_vy * wp_dy / wp_dist)
-            reward += toward_track * 0.15   # ±0.15 depending on direction
-
-        # 2. Crash penalty (on→off transition)
-        if self._was_on_track and not on:
-            reward -= 1.0
+        # Off-track → episode over, heavy penalty.
+        # The agent learns to read rays/image BEFORE crossing the boundary.
+        if not on:
             self._crash_count += 1
-        self._was_on_track = on
+            return self._obs(), -100.0, True, {
+                "lap":           self._laps,
+                "on_track":      False,
+                "step":          self._step,
+                "crashes":       self._crash_count,
+                "lap_dist":      self._lap_dist,
+                "out_of_bounds": False,
+            }
 
-        # 3. Waypoint progress — dense forward-progress signal.
-        #    Agent does NOT see waypoints; this shapes the gradient toward
-        #    completing the track, not just going fast in any direction.
+        # Waypoint progress minus time penalty.
+        # Spinning in place → diff=0 → reward = -0.05/step (must move forward).
         new_wp = self._nearest_wp(self._x, self._y)
-        if on:
-            diff = new_wp - self._wp_idx
-            n = self._n_wps
-            if diff > n // 2:
-                diff -= n
-            elif diff < -n // 2:
-                diff += n
-            reward += diff * self._progress_per_wp
+        diff = new_wp - self._wp_idx
+        n = self._n_wps
+        if diff > n // 2:
+            diff -= n
+        elif diff < -n // 2:
+            diff += n
+        reward = diff * self._progress_per_wp - 0.05
         self._wp_idx = new_wp
 
-        # 4. Lap completion
+        # Throttle bonus: reward forward acceleration, penalise unnecessary steering.
+        # accel > 0 (throttle) → small positive; steer ≠ 0 → small penalty.
+        # This makes "go straight with throttle" strictly better than "spin left/right".
+        # Penalty is proportional to |steer| so gentle corrections cost less than
+        # full lock turns.
+        reward += accel * 0.05                  # throttle bonus: up to +0.05
+        reward -= abs(steer) * 0.02             # steering cost: up to -0.02
+
+        # Lap completion
         lap_done = (self._prev_side < -5.0 and curr_side >= 0.0
                     and self._speed > 0.3)
         if lap_done:
@@ -306,7 +286,6 @@ class CarEnv:
 
         self._prev_side = curr_side
 
-        # 5. Out-of-bounds terminal
         out_of_bounds = not (0 <= self._x < 900 and 0 <= self._y < 600)
         if out_of_bounds:
             reward -= 100.0
@@ -317,7 +296,7 @@ class CarEnv:
 
         return self._obs(), reward, done, {
             "lap":           self._laps,
-            "on_track":      on,
+            "on_track":      True,
             "step":          self._step,
             "crashes":       self._crash_count,
             "lap_dist":      self._lap_dist,
