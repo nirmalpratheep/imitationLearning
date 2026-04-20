@@ -56,10 +56,12 @@ class RaceGymEnv(gym.Env):
         replay_frac: float = 0.3,
         max_steps: int = 3000,
         laps_target: int = 1,
+        shared_level=None,
     ):
         super().__init__()
         self._sampler       = sampler
         self.frontier_level = frontier_level   # writable via set_attr in subprocess mode
+        self._shared_level  = shared_level     # multiprocessing.Value for ParallelEnv mode
         self._replay_frac   = replay_frac
         self._max_steps     = max_steps
         self._laps_target   = laps_target
@@ -162,7 +164,10 @@ class RaceGymEnv(gym.Env):
 
         # Subprocess mode: replicate the sampler's replay logic locally.
         from game.rl_splits import TRAIN  # noqa: PLC0415
-        fl = max(0, min(self.frontier_level, len(TRAIN) - 1))
+        fl = max(0, min(
+            self._shared_level.value if self._shared_level is not None else self.frontier_level,
+            len(TRAIN) - 1,
+        ))
         if fl > 0 and random.random() < self._replay_frac:
             idx = random.randint(0, fl - 1)   # replay a mastered track
         else:

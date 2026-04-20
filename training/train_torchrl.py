@@ -61,9 +61,10 @@ except Exception:
 
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModule, TensorDictSequential
-from torchrl.collectors import SyncDataCollector
+from torchrl.collectors import Collector
 from torchrl.data import LazyTensorStorage, ReplayBuffer, SamplerWithoutReplacement
-from torchrl.envs import Compose, GymWrapper, SerialEnv, StepCounter, TransformedEnv
+import multiprocessing as mp
+from torchrl.envs import Compose, GymWrapper, ParallelEnv, StepCounter, TransformedEnv
 from torchrl.envs.transforms import RewardSum
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ProbabilisticActor, ValueOperator
@@ -106,6 +107,8 @@ def parse_args():
     g.add_argument("--vf-coef",       type=float, default=0.5)
     g.add_argument("--ent-coef",      type=float, default=0.0)
     g.add_argument("--max-grad-norm", type=float, default=0.5)
+    g.add_argument("--target-kl",     type=float, default=0.1,
+                   help="Stop PPO epochs early when approx_kl exceeds this")
 
     g = p.add_argument_group("Curriculum")
     g.add_argument("--threshold",    type=float, default=30.0)
@@ -238,23 +241,35 @@ def build_policy_and_value(device: torch.device):
 # Environment factory
 # ─────────────────────────────────────────────────────────────────────────────
 
-def make_vec_env(sampler, num_envs: int, max_steps: int, laps_target: int, device):
+def make_vec_env(num_envs: int, max_steps: int, laps_target: int,
+                 replay_frac: float, device, shared_level: mp.Value):
     """
-    SerialEnv of GymWrapper(RaceGymEnv) — runs in-process so envs can share
-    the CurriculumSampler. Wrapped with StepCounter + RewardSum so episode
-    length/return bubble up in the tensordict.
+    ParallelEnv of GymWrapper(RaceGymEnv) — each env runs in its own subprocess
+    for parallel CPU stepping. Frontier level is shared via a multiprocessing.Value
+    so curriculum advances in the main process propagate instantly to all workers.
     """
+    def _info_reader(info, td):
+        """Extract per-episode stats from gym info dict into the tensordict."""
+        import torch as _torch
+        td["episode_laps"]    = _torch.tensor(info.get("episode_laps",    0),   dtype=_torch.float32)
+        td["episode_crashes"] = _torch.tensor(info.get("episode_crashes", 0),   dtype=_torch.float32)
+        td["on_track_pct"]    = _torch.tensor(info.get("on_track_pct",    0.0), dtype=_torch.float32)
+        td["track_level"]     = _torch.tensor(info.get("track_level",     0),   dtype=_torch.float32)
+
     def _factory():
         gym_env = RaceGymEnv(
-            sampler       = sampler,
-            frontier_level= 0,
-            replay_frac   = 0.3,  # unused in DummyVec-style shared-sampler mode
-            max_steps     = max_steps,
-            laps_target   = laps_target,
+            sampler        = None,
+            frontier_level = 0,
+            replay_frac    = replay_frac,
+            max_steps      = max_steps,
+            laps_target    = laps_target,
+            shared_level   = shared_level,
         )
-        return GymWrapper(gym_env, device=device)
+        wrapped = GymWrapper(gym_env, device="cpu")
+        wrapped.set_info_dict_reader(_info_reader)
+        return wrapped
 
-    base = SerialEnv(num_envs, _factory)
+    base = ParallelEnv(num_envs, _factory, mp_start_method="fork")
     return TransformedEnv(base, Compose(StepCounter(), RewardSum()))
 
 
@@ -433,8 +448,9 @@ def main():
     torch.manual_seed(args.seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
-        torch.backends.cudnn.benchmark     = True
-        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark        = True
+        torch.backends.cudnn.deterministic    = False
+        torch.set_float32_matmul_precision("high")  # TF32 on A10 tensor cores
 
     # ── Auto-detect latest checkpoint when resuming a W&B run ────────────────
     if args.wandb_id and not args.resume:
@@ -487,8 +503,16 @@ def main():
 
     # ── Environment (torchrl) ─────────────────────────────────────────────────
     N = args.num_envs
-    vec_env = make_vec_env(sampler, N, max_steps=3000, laps_target=1, device=device)
-    vec_env.set_seed(args.seed)   # propagate seed to each sub-env (SB3 parity)
+    shared_level = mp.Value("i", builder.current_level)
+    vec_env = make_vec_env(
+        num_envs     = N,
+        max_steps    = 3000,
+        laps_target  = 1,
+        replay_frac  = args.replay_frac,
+        device       = device,
+        shared_level = shared_level,
+    )
+    vec_env.set_seed(args.seed)
 
     # ── Policy + value ────────────────────────────────────────────────────────
     policy_module, value_module, encoder = build_policy_and_value(device)
@@ -499,7 +523,7 @@ def main():
 
     # Sanity: run once through reset so specs match
     with torch.no_grad():
-        td0 = vec_env.reset()
+        td0 = vec_env.reset().to(device)
         policy_module(td0)
         value_module(td0)
 
@@ -526,8 +550,8 @@ def main():
 
     if args.compile:
         try:
-            policy_module = torch.compile(policy_module, mode="reduce-overhead")
-            print("torch.compile enabled on policy (reduce-overhead)")
+            policy_module = torch.compile(policy_module, mode="default")
+            print("torch.compile enabled on policy (default)")
         except Exception as e:
             print(f"torch.compile skipped: {e}")
 
@@ -539,7 +563,7 @@ def main():
     )
 
     # ── Collector ─────────────────────────────────────────────────────────────
-    collector = SyncDataCollector(
+    collector = Collector(
         vec_env,
         policy_module,
         frames_per_batch = args.rollout_steps,
@@ -562,6 +586,14 @@ def main():
     reward_window = deque(ckpt["reward_window"] if ckpt else [], maxlen=args.window)
     update_num    = 0
     start_time    = time.time()
+
+    LOG_INTERVAL  = 25_000
+    next_log      = LOG_INTERVAL
+    while next_log <= global_step:
+        next_log += LOG_INTERVAL
+    # Accumulators for the current log window
+    _log_ep_rewards:  list[float] = []
+    _log_ep_lengths:  list[int]   = []
 
     if args.checkpoint_interval > 0:
         next_ckpt = args.checkpoint_interval
@@ -590,6 +622,7 @@ def main():
     # ─────────────────────────────────────────────────────────────────────────
     # Training loop
     # ─────────────────────────────────────────────────────────────────────────
+    print("Starting training loop...", flush=True)
     for td in collector:
         rollout_frames = td.numel()
         global_step   += rollout_frames
@@ -599,28 +632,14 @@ def main():
         for ep in _iter_episodes(td):
             episode_num += 1
             reward_window.append(ep["ep_reward"])
+            _log_ep_rewards.append(ep["ep_reward"])
+            _log_ep_lengths.append(ep["ep_length"])
             rolling_mean = statistics.mean(reward_window) if reward_window else 0.0
 
             frontier   = sampler.frontier_track
             threshold  = args.threshold * frontier.complexity
             advanced   = builder.record(ep["ep_reward"], ep["ep_crashes"], ep["ep_laps"])
             is_replay  = (ep["track_level"] != frontier.level)
-
-            # Console stat line
-            win_total = len(sampler._laps)
-            win_clean = sum(1 for l, c in zip(sampler._laps, sampler._crashes)
-                            if l >= 1 and c == 0)
-            crash_mark = "X" if ep["ep_crashes"] > 0 else "OK"
-            replay_tag = " [replay]" if is_replay else ""
-            print(
-                f"  Ep {episode_num:>5}  "
-                f"Lvl {builder.current_level}/{len(TRAIN)-1}  "
-                f"Track {ep['track_level']:>2}{replay_tag}"
-                f"  {crash_mark}  "
-                f"clean {win_clean:>3}/{sampler.window}  "
-                f"r={ep['ep_reward']:>7.2f}  len={ep['ep_length']:>4}",
-                flush=True,
-            )
 
             wandb.log({
                 "global_step":              global_step,
@@ -639,12 +658,14 @@ def main():
             }, step=global_step)
 
             if advanced:
+                shared_level.value = builder.current_level  # propagate to all worker envs
                 new_frontier = sampler.frontier_track
                 print(
-                    f"\n\n  > CURRICULUM ADVANCE ->  "
+                    f"\n  >>> CURRICULUM ADVANCE -> "
                     f"Track {new_frontier.level} '{new_frontier.name}'  "
-                    f"[level {builder.current_level}/{len(TRAIN)-1}]\n"
-                    f"    rolling_mean={rolling_mean:.2f}  threshold={threshold:.2f}\n"
+                    f"[lvl {builder.current_level}/{len(TRAIN)-1}]  "
+                    f"rolling_mean={rolling_mean:.2f}  threshold={threshold:.2f}\n",
+                    flush=True,
                 )
                 wandb.log({
                     "global_step":                  global_step,
@@ -698,6 +719,12 @@ def main():
             replay.empty()
             replay.extend(data_flat)
 
+            # Early stop if policy has moved too far from rollout data
+            if args.target_kl is not None and approx_kls:
+                epoch_kl = float(np.mean(approx_kls))
+                if epoch_kl > args.target_kl:
+                    break
+
         replay.empty()
 
         # ── Explained variance ────────────────────────────────────────────────
@@ -729,6 +756,57 @@ def main():
             "system/steps_per_sec":    sps,
             "system/elapsed_hours":    (time.time() - start_time) / 3600,
         }, step=global_step)
+
+        # ── Periodic SB3-style summary ────────────────────────────────────────
+        if global_step >= next_log:
+            ep_rew_mean = float(np.mean(_log_ep_rewards)) if _log_ep_rewards else float("nan")
+            ep_len_mean = float(np.mean(_log_ep_lengths)) if _log_ep_lengths else float("nan")
+            sps_now     = global_step / max(time.time() - start_time, 1e-6)
+            frontier    = sampler.frontier_track
+            win_clean   = sum(1 for l, c in zip(sampler._laps, sampler._crashes)
+                              if l >= 1 and c == 0)
+
+            def _fmt(v, fmt=".3g"):
+                return ("-" if v != v else format(v, fmt))  # nan → "-"
+
+            rows = [
+                ("rollout/",             ""),
+                ("   ep_len_mean",        _fmt(ep_len_mean, ".1f")),
+                ("   ep_rew_mean",        _fmt(ep_rew_mean, ".3f")),
+                ("   episodes",           str(episode_num)),
+                ("curriculum/",          ""),
+                ("   level",              f"{builder.current_level}/{len(TRAIN)-1}"),
+                ("   frontier_track",     f"{frontier.level} '{frontier.name}'"),
+                ("   rolling_mean",       _fmt(rolling_mean, ".2f")),
+                ("   clean_wins",         f"{win_clean}/{args.window}"),
+                ("time/",                ""),
+                ("   fps",                _fmt(sps_now, ".0f")),
+                ("   iterations",         str(update_num)),
+                ("   total_timesteps",    f"{global_step:,}"),
+                ("train/",               ""),
+                ("   approx_kl",          _fmt(_mean(approx_kls))),
+                ("   clip_fraction",      _fmt(_mean(clip_fracs))),
+                ("   entropy_loss",       _fmt(_mean(ent_losses))),
+                ("   explained_variance", _fmt(ev)),
+                ("   learning_rate",      _fmt(args.lr)),
+                ("   policy_grad_loss",   _fmt(_mean(pg_losses))),
+                ("   value_loss",         _fmt(_mean(v_losses))),
+                ("   grad_norm",          _fmt(_mean(grad_norms))),
+            ]
+            col_w = max(len(k) for k, _ in rows) + 2
+            val_w = max((len(v) for _, v in rows if v), default=6) + 2
+            sep   = "-" * (col_w + val_w + 5)
+            print(sep)
+            for k, v in rows:
+                if v:
+                    print(f"| {k:<{col_w}} | {v:>{val_w}} |")
+                else:
+                    print(f"| {k:<{col_w+val_w+3}} |")
+            print(sep, flush=True)
+
+            _log_ep_rewards.clear()
+            _log_ep_lengths.clear()
+            next_log += LOG_INTERVAL
 
         # ── Checkpoint ────────────────────────────────────────────────────────
         if global_step >= next_ckpt:
@@ -782,4 +860,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)

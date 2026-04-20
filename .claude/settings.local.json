@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "PowerShell(Set-Location C:\\\\Users\\\\ssuga\\\\nirmalp\\\\imitationLearning; $env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; $env:PYTHONUNBUFFERED='1'; & .venv\\\\Scripts\\\\python.exe -u train_torchrl.py --wandb-offline --total-steps 256 --rollout-steps 128 --num-envs 2 --batch-size 32 --ppo-epochs 2 --checkpoint-interval 0 --video-interval 0 2>&1 | Select-Object -Last 60)",
-      "PowerShell(Set-Location C:\\\\Users\\\\ssuga\\\\nirmalp\\\\imitationLearning; $env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; $env:PYTHONUNBUFFERED='1'; $env:PYTHONIOENCODING='utf-8'; & .venv\\\\Scripts\\\\python.exe -u train_torchrl.py --wandb-offline --total-steps 256 --rollout-steps 128 --num-envs 2 --batch-size 32 --ppo-epochs 2 --checkpoint-interval 0 --video-interval 0 2>&1 | Select-Object -Last 50)"
+      "PowerShell(Set-Location C:\\\\Users\\\\ssuga\\\\nirmalp\\\\imitationLearning; $env:SDL_VIDEODRIVER='dummy'; $env:SDL_AUDIODRIVER='dummy'; $env:PYTHONUNBUFFERED='1'; $env:PYTHONIOENCODING='utf-8'; & .venv\\\\Scripts\\\\python.exe -u train_torchrl.py --wandb-offline --total-steps 256 --rollout-steps 128 --num-envs 2 --batch-size 32 --ppo-epochs 2 --checkpoint-interval 0 --video-interval 0 2>&1 | Select-Object -Last 50)",
+      "Bash(nvidia-smi *)",
+      "Bash(dmesg)",
+      "Bash(python *)",
+      "Bash(.venv/bin/python *)"
     ]
   }
 }
