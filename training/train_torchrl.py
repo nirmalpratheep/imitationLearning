@@ -68,8 +68,10 @@ from torchrl.collectors import Collector
 from torchrl.data import LazyTensorStorage, ReplayBuffer, SamplerWithoutReplacement
 import multiprocessing as mp
 from torchrl.envs import Compose, GymWrapper, ParallelEnv, StepCounter, TransformedEnv
+from torchrl.envs.gym_like import BaseInfoDictReader
 from torchrl.envs.transforms import RewardSum
 from torchrl.envs.utils import ExplorationType, set_exploration_type
+from torchrl.data.tensor_specs import Composite, Unbounded
 from torchrl.modules import ProbabilisticActor, ValueOperator
 from torchrl.modules.distributions import IndependentNormal
 from torchrl.objectives import ClipPPOLoss
@@ -244,6 +246,29 @@ def build_policy_and_value(device: torch.device):
 # Environment factory
 # ─────────────────────────────────────────────────────────────────────────────
 
+class _EpisodeStatsReader(BaseInfoDictReader):
+    """
+    BaseInfoDictReader subclass so set_info_dict_reader() registers the keys in
+    GymWrapper.observation_spec — required for ParallelEnv to allocate shared
+    memory and transfer these values from subprocess to main process.
+    """
+    info_spec = Composite(
+        episode_laps    = Unbounded((), dtype=torch.float32),
+        episode_crashes = Unbounded((), dtype=torch.float32),
+        on_track_pct    = Unbounded((), dtype=torch.float32),
+        track_level     = Unbounded((), dtype=torch.float32),
+    )
+
+    def __call__(self, info, td):
+        td["episode_laps"]    = torch.tensor(info.get("episode_laps",    0),   dtype=torch.float32)
+        td["episode_crashes"] = torch.tensor(info.get("episode_crashes", 0),   dtype=torch.float32)
+        td["on_track_pct"]    = torch.tensor(info.get("on_track_pct",    0.0), dtype=torch.float32)
+        td["track_level"]     = torch.tensor(info.get("track_level",     0),   dtype=torch.float32)
+
+    def reset(self, tensordict_reset=None):
+        pass
+
+
 def make_vec_env(num_envs: int, max_steps: int, laps_target: int,
                  replay_frac: float, device, shared_level: mp.Value):
     """
@@ -251,14 +276,6 @@ def make_vec_env(num_envs: int, max_steps: int, laps_target: int,
     for parallel CPU stepping. Frontier level is shared via a multiprocessing.Value
     so curriculum advances in the main process propagate instantly to all workers.
     """
-    def _info_reader(info, td):
-        """Extract per-episode stats from gym info dict into the tensordict."""
-        import torch as _torch
-        td["episode_laps"]    = _torch.tensor(info.get("episode_laps",    0),   dtype=_torch.float32)
-        td["episode_crashes"] = _torch.tensor(info.get("episode_crashes", 0),   dtype=_torch.float32)
-        td["on_track_pct"]    = _torch.tensor(info.get("on_track_pct",    0.0), dtype=_torch.float32)
-        td["track_level"]     = _torch.tensor(info.get("track_level",     0),   dtype=_torch.float32)
-
     def _factory():
         gym_env = RaceGymEnv(
             sampler        = None,
@@ -269,7 +286,7 @@ def make_vec_env(num_envs: int, max_steps: int, laps_target: int,
             shared_level   = shared_level,
         )
         wrapped = GymWrapper(gym_env, device="cpu")
-        wrapped.set_info_dict_reader(_info_reader)
+        wrapped.set_info_dict_reader(_EpisodeStatsReader())
         return wrapped
 
     base = ParallelEnv(num_envs, _factory, mp_start_method="fork")

@@ -235,7 +235,7 @@ class CarEnv:
         on        = self.track.on_track(self._x, self._y)
         curr_side = self.track.gate_side(self._x, self._y)
 
-        # Lap distance accumulation (logging only)
+        # Lap distance accumulation
         dx = self._x - self._lap_prev_x
         dy = self._y - self._lap_prev_y
         self._lap_dist   += math.hypot(dx, dy)
@@ -310,7 +310,7 @@ class CarEnv:
         if lap_done:
             self._laps       += 1
             self._gate_armed  = False   # re-arm for next lap
-            reward           += 10.0    # target-reached bonus
+            reward           += 10.0    # lap bonus
             self._lap_dist    = 0.0
             self._lap_prev_x  = self._x
             self._lap_prev_y  = self._y

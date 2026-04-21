@@ -6,7 +6,12 @@
       "Bash(nvidia-smi *)",
       "Bash(dmesg)",
       "Bash(python *)",
-      "Bash(.venv/bin/python *)"
+      "Bash(.venv/bin/python *)",
+      "Bash(ffmpeg -i /home/ubuntu/imitationLearning/inference_videos/step00606208_track01_Wide_Oval.mp4 -vf \"fps=4\" /tmp/frames/frame_%04d.png -y)",
+      "Read(//tmp/**)",
+      "Bash(.venv/bin/python3 *)",
+      "Bash(mkdir -p /tmp/frames2)",
+      "Bash(ffmpeg -i /home/ubuntu/imitationLearning/inference_videos/step00802816_track01_Wide_Oval.mp4 -vf \"fps=4\" /tmp/frames2/frame_%04d.png -y)"
     ]
   }
 }
