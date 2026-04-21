@@ -15,9 +15,9 @@ Stratified split: 2 train + 1 val + 1 test per tier.
 
 | Split | Tracks | Role |
 |-------|--------|------|
-| **TRAIN** (8) | 1,2, 5,6, 9,10, 13,14 | Curriculum progression. Ordered easy→hard within each tier. |
-| **VAL** (4) | 3, 7, 11, 15 | Performance gating. Never trained on. Used to confirm the agent generalises before advancing. |
-| **TEST** (4) | 4, 8, 12, 16 | Held-out. Not seen until final evaluation. Hardest track in each tier. |
+| **TRAIN** (9) | 1,2, 5,6, 9,10, 14, 17,18 | Curriculum progression. Ordered easy→hard within each tier. |
+| **VAL** (4) | 3, 7, 11, 19 | Performance gating. Never trained on. Used to confirm the agent generalises before advancing. |
+| **TEST** (4) | 4, 8, 12, 20 | Held-out. Not seen until final evaluation. Hardest track in each tier. |
 
 **Rationale**: Val and test tracks are within-tier but harder than the easiest
 two train tracks. This tests within-tier generalisation without making val/test
@@ -168,8 +168,5 @@ Track  Name                Width  MaxSpd  Key challenge
 10     Chicane Track        70    3.5     Chicane section
 11     Double Hairpin       70    3.5     VAL — two hairpins
 12     Asymmetric Track     70    3.8     TEST — asymmetric arcs
-13     L-Shape Circuit      72    4.0     First polygon
-14     T-Notch Circuit      58    4.0     T junction
-15     Complex Circuit      65    4.5     VAL — multi-feature
-16     Master Challenge     50    4.5     TEST — narrowest + fastest
+14     T-Notch Circuit      58    4.0     First polygon
 ```

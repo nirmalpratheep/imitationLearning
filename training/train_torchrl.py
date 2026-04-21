@@ -878,7 +878,7 @@ def main():
 
         # ── Greedy curriculum eval ────────────────────────────────────────────
         if global_step >= next_eval:
-            tracks_to_eval = TRAIN[: builder.current_level + 1]
+            tracks_to_eval = TRAIN
             all_pass   = True
             eval_log   = {}
             n_passing  = 0
@@ -923,44 +923,60 @@ def main():
                        **eval_log}, step=global_step)
 
             if all_pass:
-                shared_n_priority.value = 0   # all tracks passed — clear priority
-                advanced = builder._sampler.advance()
-                if advanced:
-                    shared_level.value = builder.current_level
-                    new_frontier = sampler.frontier_track
-                    print(
-                        f"\n  >>> GREEDY EVAL ADVANCE -> "
-                        f"Track {new_frontier.level} '{new_frontier.name}'  "
-                        f"[lvl {builder.current_level}/{len(TRAIN)-1}]\n",
-                        flush=True,
-                    )
-                    wandb.log({"global_step":                  global_step,
-                               "curriculum/level":             builder.current_level,
-                               "curriculum/advanced_to_level": new_frontier.level,
-                               "curriculum/advanced_to_name":  new_frontier.name},
-                              step=global_step)
-                else:
-                    print(
-                        f"\n  >>> CURRICULUM COMPLETE — all {len(TRAIN)} tracks mastered "
-                        f"at step {global_step:,}\n",
-                        flush=True,
-                    )
-                    wandb.log({"global_step": global_step,
-                               "curriculum/complete": 1}, step=global_step)
-
+                # Every track passed simultaneously — training complete
+                shared_n_priority.value = 0
+                print(
+                    f"\n  >>> ALL {len(TRAIN)} TRACKS PASSED — training complete "
+                    f"at step {global_step:,}\n",
+                    flush=True,
+                )
+                wandb.log({"global_step": global_step, "curriculum/complete": 1},
+                          step=global_step)
                 adv_path = os.path.join(
                     args.checkpoint_dir,
-                    f"ppo_torchrl_advance_lvl{builder.current_level:02d}_step{global_step:08d}.pt",
+                    f"ppo_torchrl_complete_step{global_step:08d}.pt",
                 )
                 save_checkpoint(
                     adv_path, policy_module, value_module, optimizer,
                     global_step, builder, args,
                     reward_window, frontier_reward_window, episode_num, run.id,
                 )
-                print(f"  [CKPT] Advance checkpoint: {adv_path}", flush=True)
-
-                if not advanced:
-                    break  # curriculum complete — stop training
+                print(f"  [CKPT] Final checkpoint: {adv_path}", flush=True)
+                break
+            else:
+                # Advance only if every track up to and including the frontier passes
+                prior_ok = all(
+                    eval_passed.get(tr, False)
+                    for tr in TRAIN[: builder.current_level + 1]
+                )
+                if prior_ok:
+                    advanced = builder._sampler.advance()
+                    if advanced:
+                        shared_level.value = builder.current_level
+                        new_frontier = sampler.frontier_track
+                        print(
+                            f"\n  >>> ADVANCE -> Track {new_frontier.level} "
+                            f"'{new_frontier.name}'  "
+                            f"[lvl {builder.current_level}/{len(TRAIN)-1}]\n",
+                            flush=True,
+                        )
+                        wandb.log({
+                            "global_step":                  global_step,
+                            "curriculum/level":             builder.current_level,
+                            "curriculum/advanced_to_level": new_frontier.level,
+                            "curriculum/advanced_to_name":  new_frontier.name,
+                        }, step=global_step)
+                        adv_path = os.path.join(
+                            args.checkpoint_dir,
+                            f"ppo_torchrl_advance_lvl{builder.current_level:02d}"
+                            f"_step{global_step:08d}.pt",
+                        )
+                        save_checkpoint(
+                            adv_path, policy_module, value_module, optimizer,
+                            global_step, builder, args,
+                            reward_window, frontier_reward_window, episode_num, run.id,
+                        )
+                        print(f"  [CKPT] Advance checkpoint: {adv_path}", flush=True)
 
             next_eval += args.eval_interval_steps
 

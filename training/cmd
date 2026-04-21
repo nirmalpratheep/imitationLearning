@@ -4,5 +4,6 @@ uv run python -u training/train_torchrl.py \
   --batch-size 1024 \
   --ppo-epochs 10 \
   --compile \
+  --window 20 \
   --video-interval 100000 \
   --total-steps 300_000_000
