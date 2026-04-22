@@ -364,15 +364,16 @@ def _build_all_tracks():
     # ── GROUP 3: Two half-arcs ───────────────────────────────────────────────
 
     # 9. Hairpin Track
-    # arc1: right gentle: (700,440)→(700,160) through (820,300)
-    arc1 = _arc(700, 300, 120, 140, 90, -90, 24)
-    # arc2: left tight: (220,160)→(220,440) through (140,300)
-    arc2 = _arc(220, 300, 80, 140, 270, 90, 24)
-    wp = arc1 + arc2
+    # Counter-clockwise to match all other tracks (start_angle=180°, facing left).
+    # arc2_rev: left tight hairpin (220,440)→(140,300)→(220,160)
+    arc2_rev = _arc(220, 300, 80, 140, 90, 270, 24)
+    # arc1_rev: right gentle (700,160)→(820,300)→(700,440)
+    arc1_rev = _arc(700, 300, 120, 140, -90, 90, 24)
+    wp = arc2_rev + arc1_rev
     tracks.append(TrackDef(
         level=9, name="Hairpin Track",
         waypoints=wp, width=75,
-        start_pos=(460, 440), start_angle=0.0, max_speed=3.5
+        start_pos=(460, 440), start_angle=180.0, max_speed=3.5
     ))
 
     # 10. Chicane Track
