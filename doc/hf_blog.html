@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Teaching a Car to Race from Scratch with Curriculum RL and OpenEnv</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Source Serif Pro", Georgia, "Times New Roman", serif;
+      font-size: 18px;
+      line-height: 1.75;
+      color: #1a1a2e;
+      background: #fafaf8;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .page {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    .post-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .author-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 20px;
+    }
+    .author-badge svg { width: 18px; height: 18px; fill: #ff6b35; }
+
+    /* ── Typography ───────────────────────────────────────────── */
+    h1 {
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 800;
+      line-height: 1.2;
+      color: #0d0d1a;
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: #0d0d1a;
+      margin: 52px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #eee;
+    }
+    h3 {
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin: 32px 0 12px;
+    }
+    p { margin-bottom: 18px; }
+    a { color: #ff6b35; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    strong { font-weight: 700; color: #0d0d1a; }
+
+    /* ── TL;DR card ───────────────────────────────────────────── */
+    .tldr {
+      background: linear-gradient(135deg, #fff4ef 0%, #fff9f7 100%);
+      border-left: 4px solid #ff6b35;
+      border-radius: 8px;
+      padding: 24px 28px;
+      margin: 0 0 40px;
+    }
+    .tldr h2 {
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #ff6b35;
+      border: none;
+      margin: 0 0 12px;
+      padding: 0;
+    }
+    .tldr p { margin-bottom: 12px; font-size: 16px; }
+    .tldr .result-badge {
+      display: inline-block;
+      background: #ff6b35;
+      color: #fff;
+      font-family: "Inter", sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 999px;
+      margin-top: 4px;
+    }
+
+    /* ── Hero GIF ─────────────────────────────────────────────── */
+    .hero-gif {
+      width: 100%;
+      border-radius: 10px;
+      margin: 32px 0;
+      box-shadow: 0 4px 32px rgba(0,0,0,.12);
+    }
+    .caption {
+      text-align: center;
+      font-family: "Inter", sans-serif;
+      font-size: 13px;
+      color: #777;
+      margin-top: -20px;
+      margin-bottom: 32px;
+    }
+
+    /* ── Table of Contents ────────────────────────────────────── */
+    .toc {
+      background: #f5f5f0;
+      border-radius: 8px;
+      padding: 24px 28px;
+      margin: 40px 0;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 15px;
+    }
+    .toc h2 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #888;
+      border: none;
+      margin: 0 0 14px;
+      padding: 0;
+    }
+    .toc ol { padding-left: 20px; }
+    .toc li { margin-bottom: 6px; }
+    .toc a { color: #333; }
+    .toc a:hover { color: #ff6b35; }
+
+    /* ── Code blocks ──────────────────────────────────────────── */
+    pre {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: 8px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      margin: 20px 0 28px;
+    }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+      font-size: .88em;
+      background: #f0f0ec;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #c0392b;
+    }
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+      font-size: inherit;
+      border-radius: 0;
+    }
+
+    /* ── Tables ───────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin: 20px 0 32px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 15px;
+    }
+    th {
+      background: #f0f0ec;
+      text-align: left;
+      padding: 10px 14px;
+      font-weight: 700;
+      color: #333;
+      border-bottom: 2px solid #ddd;
+    }
+    td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #eee;
+      color: #333;
+    }
+    tr:hover td { background: #fafaf8; }
+    .pass  { color: #27ae60; font-weight: 700; font-size: 18px; }
+    .fail  { color: #e74c3c; font-weight: 700; font-size: 18px; }
+
+    /* ── Images (W&B charts) ──────────────────────────────────── */
+    .chart-img {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid #e5e5e0;
+      margin: 16px 0 8px;
+    }
+
+    /* ── FAQ ──────────────────────────────────────────────────── */
+    .faq-item {
+      border: 1px solid #e5e5e0;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      background: #fff;
+    }
+    .faq-item h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      color: #0d0d1a;
+    }
+    .faq-item p { margin: 0; font-size: 16px; }
+
+    /* ── Inline callout ───────────────────────────────────────── */
+    .callout {
+      background: #fffbf0;
+      border-left: 4px solid #f0a500;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 20px 0;
+      font-size: 16px;
+    }
+
+    /* ── Lists ────────────────────────────────────────────────── */
+    ul, ol { padding-left: 24px; margin-bottom: 18px; }
+    li { margin-bottom: 6px; }
+
+    /* ── Track group labels ───────────────────────────────────── */
+    .group-block {
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      background: #f5f5f0;
+      border-radius: 6px;
+      padding: 14px 18px;
+      font-size: 14px;
+      line-height: 1.8;
+      margin: 16px 0 24px;
+      white-space: pre;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────── */
+    .post-footer {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid #eee;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #888;
+      text-align: center;
+    }
+    .learn-more-links { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+    .learn-more-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #f0f0ec;
+      color: #333;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-family: "Inter", sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .learn-more-links a:hover { background: #ff6b35; color: #fff; text-decoration: none; }
+
+    /* ── Citation box ─────────────────────────────────────────── */
+    .citation {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: 8px;
+      padding: 20px 24px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      margin: 16px 0;
+    }
+
+    /* ── Responsive ───────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      body { font-size: 16px; }
+      .page { padding: 28px 16px 64px; }
+      h1 { font-size: 26px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ─────────────────────────────────────────────── -->
+  <header class="post-header">
+    <div class="author-badge">
+      <svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+      NirmalPratheep &nbsp;·&nbsp; April 2026 &nbsp;·&nbsp; OpenEnv Student Challenge
+    </div>
+    <h1>🏎️ Teaching a Car to Race from Scratch with Curriculum RL and OpenEnv</h1>
+  </header>
+
+  <!-- ── TL;DR ────────────────────────────────────────────────── -->
+  <div class="tldr">
+    <h2>TL;DR</h2>
+    <p>
+      A PPO agent learns to drive on 10 tracks of increasing difficulty — starting from random noise,
+      ending with hairpin turns and chicane layouts — using only a <strong>64×64 egocentric image</strong>
+      and <strong>9 sensor readings</strong>. No human demonstrations, no map, no privileged information. Just reward.
+    </p>
+    <p>The full environment is open-source and OpenEnv-compliant. Serve it as an HTTP API in one line:</p>
+    <pre><code>uvicorn env.server.app:app --host 0.0.0.0 --port 8000</code></pre>
+    <span class="result-badge">Final result: 10 / 10 tracks — zero crashes — ~1.3M environment steps</span>
+  </div>
+
+  <!-- ── Hero GIF ─────────────────────────────────────────────── -->
+  <img class="hero-gif"
+       src="../inference_videos/collage.gif"
+       alt="Agent driving all 10 curriculum tracks simultaneously" />
+  <p class="caption">The final trained policy — zero crashes, at least one completed lap on every track, evaluated deterministically.</p>
+
+  <!-- ── Table of Contents ──────────────────────────────────────── -->
+  <nav class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#problem">The Problem with Hard Tasks from Day One</a></li>
+      <li><a href="#environment">The Environment: 10 Tracks, 3 Groups</a></li>
+      <li><a href="#observation">What Does the Agent See?</a></li>
+      <li><a href="#reward">Reward Design: Getting the Scale Right</a></li>
+      <li><a href="#architecture">Architecture: ImpalaCNN + Shared Encoder</a></li>
+      <li><a href="#training">Training: Three-Layer Curriculum</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#try-it">Try It Yourself</a></li>
+      <li><a href="#learn-more">Learn More</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── Section 1 ──────────────────────────────────────────────── -->
+  <h2 id="problem">The Problem with Hard Tasks from Day One</h2>
+
+  <p>
+    Reinforcement learning from scratch is brutally hard when the task is too difficult from the start.
+  </p>
+  <p>
+    Imagine dropping an untrained car-racing agent directly onto a tight hairpin track. It crashes
+    immediately. The reward is −15 and the episode ends. The agent tries again, crashes again.
+    After thousands of identical failures, the gradient says <em>"don't move"</em> — and it stops trying.
+  </p>
+  <p>
+    The classic solution is <strong>curriculum learning</strong>: start with the easiest version of the
+    task and only advance when the agent has genuinely mastered it. Build skills one layer at a time.
+  </p>
+  <p>
+    But implementing curriculum learning <em>robustly</em> — with automatic gating, forgetting prevention,
+    and regression recovery — is where the interesting engineering lives. This post walks through every
+    design decision that made a real curriculum work, from first principles.
+  </p>
+
+  <!-- ── Section 2 ──────────────────────────────────────────────── -->
+  <h2 id="environment">The Environment: 10 Tracks, 3 Groups</h2>
+
+  <p>
+    I built the simulation in <strong>Pygame</strong> with no ML dependencies. Each track is a
+    <code>TrackDef</code> — a procedurally defined centreline of waypoints rendered into a dark-grey
+    tarmac surface with white boundary lines and a checkered start/finish line.
+  </p>
+
+  <div class="group-block">Group A — Easy ovals           Tracks 1–4   Width: 115 → 58 px
+Group B — Rectangular shapes   Tracks 5–8   First 90° corners
+Group C — Hairpins &amp; chicanes  Tracks 9–10  Hairpin reversals, S-bends</div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Track</th><th>Road Width</th><th>Max Speed</th><th>Key Challenge</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Wide Oval</td><td>115 px</td><td>3.0</td><td>Nothing — just drive</td></tr>
+        <tr><td>2</td><td>Standard Oval</td><td>85 px</td><td>3.5</td><td>Slightly narrower</td></tr>
+        <tr><td>3</td><td>Narrow Oval</td><td>58 px</td><td>3.5</td><td>Precision required</td></tr>
+        <tr><td>4</td><td>Superspeedway</td><td>85 px</td><td>4.5</td><td>High speed, elongated</td></tr>
+        <tr><td>5</td><td>Rounded Rectangle</td><td>90 px</td><td>3.5</td><td>First real corners</td></tr>
+        <tr><td>6</td><td>Stadium Oval</td><td>80 px</td><td>4.0</td><td>Tight end-caps</td></tr>
+        <tr><td>7</td><td>Tight Rectangle</td><td>65 px</td><td>3.5</td><td>Sharp 90° corners</td></tr>
+        <tr><td>8</td><td>Small Oval</td><td>60 px</td><td>3.2</td><td>Small radius</td></tr>
+        <tr><td>9</td><td>Hairpin Track</td><td>75 px</td><td>3.5</td><td>Hairpin reversal</td></tr>
+        <tr><td>10</td><td>Chicane Track</td><td>70 px</td><td>3.5</td><td>S-bend chicane</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Track difficulty is computed as:</p>
+  <pre><code>complexity = (base_width / road_width) × (max_speed / base_speed)</code></pre>
+
+  <p>
+    The environment is fully compliant with the <strong>OpenEnv</strong> standard.
+    Any client can connect over HTTP:
+  </p>
+  <pre><code>from openenv import connect
+
+env = connect("http://localhost:8000")
+obs = env.reset()
+while not obs.done:
+    action = my_agent(obs)    # DriveAction(accel=..., steer=...)
+    obs = env.step(action)</code></pre>
+
+  <p>Or use the Gymnasium wrapper directly for local training:</p>
+  <pre><code>from env.gym_env import RaceGymEnv
+
+env = RaceGymEnv(track_level=5)
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())</code></pre>
+
+  <!-- ── Section 3 ──────────────────────────────────────────────── -->
+  <h2 id="observation">What Does the Agent See?</h2>
+
+  <p>
+    The agent receives two inputs every step, fused by the encoder before the actor and critic heads.
+  </p>
+
+  <h3>1. Egocentric Headlight Image — <code>(3, 64, 64)</code></h3>
+
+  <p>
+    The critical design decision: <strong>the image is always rotated so the car faces upward</strong>.
+  </p>
+  <pre><code>game state (x, y, angle)
+  → draw track + 60°-wide headlight cone to offscreen canvas
+  → crop 120×120 px centred on car (grass-padded at edges)
+  → rotate so heading = UP
+  → re-crop centre 120×120 after rotation
+  → scale to 64×64</code></pre>
+
+  <p>
+    This makes the visual input <strong>invariant to absolute position and heading</strong>. The CNN
+    never learns "at pixel (450, 515), the track curves left." It only needs to learn "a white boundary
+    approaching from the right half of the view means steer left." The effective training distribution
+    is ~4× richer without any extra data — the same track looks different from every heading.
+  </p>
+
+  <h3>2. Scalar Sensors — <code>(9,)</code></h3>
+
+  <pre><code>[
+  angular_velocity,   # gyroscope — how fast am I turning?
+  speed,              # speedometer — speed / max_speed
+  ray_left,           # wall distance at −90°  (normalised 0→1)
+  ray_front_left,     # wall distance at −45°
+  ray_front,          # wall distance at   0°  (straight ahead)
+  ray_front_right,    # wall distance at  +45°
+  ray_right,          # wall distance at  +90°
+  wp_sin,             # sin(bearing to next waypoint − current heading)
+  wp_cos,             # cos(bearing to next waypoint − current heading)
+]</code></pre>
+
+  <p>Two design choices here that made a real difference:</p>
+
+  <p>
+    <strong>Raycasts instead of a binary <code>on_track</code> flag.</strong> The original environment
+    had a single boolean: are you on track? The agent only learned it had crashed <em>after</em> crashing.
+    Replacing this with 5 raycasts means the agent can <em>see</em> a wall approaching at 80 px and start
+    steering away — the difference between reactive and anticipatory driving.
+  </p>
+
+  <p>
+    <strong>Waypoint bearing as a relative GPS compass.</strong> Early experiments included raw waypoint
+    coordinates <code>(x, y)</code>. These don't transfer across tracks — "waypoint at (700, 300) means go right"
+    is meaningless on Track 9. The <code>(wp_sin, wp_cos)</code> encoding is track-agnostic: it only says
+    <em>where the track goes relative to where I'm pointing</em>. <code>wp_cos ≈ 1</code> means the track
+    is straight ahead. <code>wp_sin &lt; 0</code> means it bends left. This encoding is what enables the
+    same policy to generalise across all 10 tracks.
+  </p>
+
+  <!-- ── Section 4 ──────────────────────────────────────────────── -->
+  <h2 id="reward">Reward Design: Getting the Scale Right</h2>
+
+  <p>
+    Early experiments used large reward magnitudes — ±300 for crashes, +200 for lap completion. The result:
+    value function targets in the hundreds caused value loss to completely dominate the gradient. The policy
+    barely updated because all gradient budget was spent fitting the value function.
+  </p>
+
+  <div class="callout">
+    The fix: scale everything down so rewards stay in <strong>[−15, +10]</strong>.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Event</th><th>Reward</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Every step</td><td>−0.005</td><td>Efficiency pressure — don't dawdle</td></tr>
+        <tr><td>Forward speed</td><td><code>speed_norm × 0.10</code></td><td>Must move to earn reward</td></tr>
+        <tr><td>Reverse speed</td><td><code>speed_norm × 0.10</code> (negative)</td><td>Penalise going backwards</td></tr>
+        <tr><td>Waypoint advance</td><td><strong>+0.25</strong> per waypoint</td><td>Dense directional signal</td></tr>
+        <tr><td>Waypoint regress</td><td><strong>−0.25</strong> per waypoint</td><td>Wrong-way penalty</td></tr>
+        <tr><td>Lap completed</td><td><strong>+10.0</strong></td><td>Major completion bonus</td></tr>
+        <tr><td>Crash / off-track</td><td><strong>−15.0</strong>, done</td><td>Hard deterrent</td></tr>
+        <tr><td>Out of bounds</td><td><strong>−15.0</strong>, done</td><td>Stay on screen</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The <strong>waypoint progress reward</strong> was the single most impactful addition. Without it, the
+    only lap signal is the +10 bonus at the finish line — extremely sparse for a 3000-step episode where
+    most early episodes never complete a lap. With +0.25 per waypoint, the agent gets a gradient
+    <em>pointing toward the finish line</em> on every step of every episode, even episodes it never completes.
+  </p>
+
+  <h3>Lap Detection: No Shortcuts</h3>
+
+  <p>
+    A naive "did the car cross the start line" check is trivially exploited. The final implementation
+    uses a two-phase arm/trigger gate:
+  </p>
+  <ol>
+    <li><strong>Arm phase:</strong> Car must travel &gt;50 px <em>past</em> the start line in the forward direction</li>
+    <li><strong>Trigger phase:</strong> Car must cross back through the start line with <code>speed &gt; 0.3</code>
+        <strong>and</strong> having covered ≥80% of the track's optimal lap distance</li>
+  </ol>
+  <p>The 80% distance check makes shortcutting the infield physically impossible — the car genuinely has to drive the full track.</p>
+
+  <!-- ── Section 5 ──────────────────────────────────────────────── -->
+  <h2 id="architecture">Architecture: ImpalaCNN + Shared Encoder</h2>
+
+  <pre><code>image (3, 64, 64) ──► ImpalaCNN
+                       Block 1: Conv(3→16)  + MaxPool + ResBlock × 2
+                       Block 2: Conv(16→32) + MaxPool + ResBlock × 2
+                       Block 3: Conv(32→32) + MaxPool + ResBlock × 2
+                       Flatten → Linear → ReLU ───────────────► 256-d
+                                                                    │
+scalars (9,) ──────► MLP: Linear(9→32) → ReLU → Linear(32→32) ► 32-d
+                                                                    │
+                                                          [Concat] 288-d
+                                                         (RaceEncoder)
+                                                                    │
+                                         ┌──────────────────────────┤
+                                    Actor head                Critic head
+                                 Linear(288→2)              Linear(288→1)
+                                 + log_std param             scalar V(s)
+                                 IndependentNormal
+                                 → [accel, steer]</code></pre>
+
+  <h3>Why ImpalaCNN over Nature CNN?</h3>
+
+  <p>
+    Nature CNN (3 conv layers, no skip connections) is the standard Atari baseline. I tried it first
+    — the agent stalled on Track 3. The culprit: without skip connections, gradients vanish before
+    reaching the early conv layers. The first-layer filters stop learning after a few hundred thousand steps.
+  </p>
+  <p>
+    ImpalaCNN adds <strong>residual connections</strong> in each block: <code>output = x + conv_block(x)</code>.
+    Gradients flow directly from the actor/critic heads back to the earliest filters. In practice, this
+    converged in ~3–5× fewer environment steps for the same wall-clock inference cost.
+  </p>
+
+  <h3>Initialisation Details</h3>
+  <ul>
+    <li><strong>Orthogonal init</strong> (gain √2 for encoder layers) — prevents gradient vanishing at init</li>
+    <li><strong>Actor head gain 0.01</strong> — very small initial action means, so the car doesn't immediately drive full-speed into a wall on step 1</li>
+    <li><strong>Actor bias[0] = 0.3</strong> — gentle initial forward acceleration; without this, the car often sits still during early exploration and learns nothing</li>
+    <li><strong>Log-std = −1.0</strong> initially (std ≈ 0.37) — moderate exploration, not so random the agent can't get off the start line</li>
+  </ul>
+
+  <!-- ── Section 6 ──────────────────────────────────────────────── -->
+  <h2 id="training">Training: Three-Layer Curriculum</h2>
+
+  <pre><code>uv run python -u training/train_torchrl.py \
+  --num-envs 16        \   # parallel workers
+  --rollout-steps 8192  \  # frames before each PPO update
+  --batch-size 1024     \  # PPO minibatch size
+  --ppo-epochs 10       \  # passes per rollout
+  --compile                # torch.compile (~30% throughput boost)</code></pre>
+
+  <p>
+    The curriculum has three interlocking mechanisms. All three are necessary — any one alone is insufficient.
+  </p>
+
+  <h3>Layer 1 — Greedy Evaluation Gating</h3>
+  <p>
+    Every 25k steps, all 10 tracks are evaluated with a <strong>deterministic</strong> (greedy) policy
+    — no exploration noise. A track passes if the agent completes ≥1 lap with 0 crashes. The curriculum
+    frontier advances only when every track up to the current one passes. If all 10 pass simultaneously,
+    training stops.
+  </p>
+  <div class="callout">
+    Why greedy eval instead of training reward? Training reward mixes exploration noise — the agent might
+    get lucky. Greedy eval measures what the policy <em>actually</em> knows.
+  </div>
+
+  <h3>Layer 2 — Anti-Forgetting Replay</h3>
+  <pre><code>70% of episodes → current frontier track
+30% of episodes → round-robin through all mastered tracks</code></pre>
+  <p>
+    Without replay, the agent reliably regresses on Track 1 by the time it reaches Track 7.
+    Catastrophic forgetting is fast — within 200k steps, early skills dissolve if never practised.
+  </p>
+  <p>
+    Round-robin (rather than uniform random) ensures every mastered track gets equal coverage.
+    To make this concrete — imagine the agent is on Track 7. The schedule looks like:
+  </p>
+  <pre><code>Episode 1: frontier (Track 7)
+Episode 2: frontier (Track 7)
+Episode 3: replay   (Track 1)  ← round-robin: 1, 2, 3, 4, 5, 6, 1, 2, ...
+Episode 4: frontier (Track 7)
+Episode 5: frontier (Track 7)
+Episode 6: replay   (Track 2)
+...</code></pre>
+
+  <h3>Layer 3 — Priority Replay</h3>
+  <p>
+    When greedy eval discovers a regression (a previously-passing track now failing), that track is
+    written to a shared memory array. All 16 worker processes check this array and dedicate an
+    additional 30% of episodes to the failing track — on top of normal replay.
+  </p>
+  <p>
+    Without this, regressions persist for 5–10 eval intervals. With priority replay, they're typically
+    recovered within 1–2 intervals. The curriculum stays monotonically advancing rather than oscillating.
+  </p>
+
+  <h3>W&amp;B Training Curves</h3>
+  <p>
+    The curriculum level stepping is clearly visible in the episode reward chart — each plateau is the
+    agent consolidating skills on a new frontier track, each jump is advancement.
+  </p>
+  <img class="chart-img" src="Training-Episode-wandb.png"
+       alt="Episode metrics — reward, laps, crashes across curriculum" />
+  <p class="caption">Episode metrics — reward, laps, crashes across the full curriculum</p>
+
+  <img class="chart-img" src="Training-PPO-wandb.png"
+       alt="PPO internals — value loss, policy loss, entropy, explained variance" />
+  <p class="caption">PPO internals — value loss, policy loss, entropy, explained variance</p>
+
+  <p>
+    The explained variance chart is the clearest health signal: it rises to &gt;0.85 within 200k steps
+    per frontier, showing the value function accurately models the curriculum. If it drops below 0.5,
+    the reward scale is wrong or the network capacity is insufficient.
+  </p>
+
+  <!-- ── Section 7 ──────────────────────────────────────────────── -->
+  <h2 id="results">Results</h2>
+
+  <p>Deterministic (greedy) evaluation on all 10 tracks, final checkpoint:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Track</th><th>Laps</th><th>Crashes</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 — Wide Oval</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>2 — Standard Oval</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>3 — Narrow Oval</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>4 — Superspeedway</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>5 — Rounded Rectangle</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>6 — Stadium Oval</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>7 — Tight Rectangle</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>8 — Small Oval</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>9 — Hairpin Track</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+        <tr><td>10 — Chicane Track</td><td>1</td><td>0</td><td class="pass">✅</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tldr" style="margin-top:8px;">
+    <h2>Final Score</h2>
+    <p><strong>10 / 10 PASS</strong> — ~1.3M environment steps — ~1–3 hours on a single GPU with 16 workers.</p>
+  </div>
+
+  <!-- ── Section 8: FAQ ─────────────────────────────────────────── -->
+  <h2 id="faq">FAQ</h2>
+
+  <div class="faq-item">
+    <h3>1. Why not train on all 10 tracks simultaneously from the start?</h3>
+    <p>
+      I tried this. The agent converges on Track 1 (wide oval) and never escapes. The gradient signal
+      from Track 10 (chicane) is pure noise when the agent has zero driving skill — it drowns the useful
+      signal from Track 1 rather than complementing it. Curriculum pacing ensures difficulty increases
+      only once the agent is ready.
+    </p>
+  </div>
+
+  <div class="faq-item">
+    <h3>2. Does the waypoint GPS make the agent cheat the reward?</h3>
+    <p>
+      The GPS (<code>wp_sin</code>, <code>wp_cos</code>) points toward the track centreline ahead.
+      It doesn't tell the agent where the start line is or when a lap is complete — that's detected
+      separately by the gate arm/trigger mechanism. The GPS just says "the road bends slightly left"
+      — the same information a real car's navigation would provide.
+    </p>
+  </div>
+
+  <div class="faq-item">
+    <h3>3. Why does the egocentric image face upward rather than forward?</h3>
+    <p>
+      "Forward" in the image <em>is</em> up — the image is rotated so the car always appears to drive
+      toward the top of the frame. This makes the visual representation of "I'm about to hit a wall on
+      the left" identical regardless of whether you're on the left straight, right straight, or any curve.
+      A CNN trained on this generalises to every track orientation automatically.
+    </p>
+  </div>
+
+  <div class="faq-item">
+    <h3>4. Can this agent drive on a track it was never trained on?</h3>
+    <p>
+      Partially. The features it has learned — "slow down when the wall is close," "follow the centreline
+      bearing," "don't reverse" — are genuinely general. On a new oval it would likely succeed. On a track
+      with a layout completely unlike any of the 10 (e.g. a figure-8 with an intersection), it would
+      probably fail. A larger, more diverse curriculum would help.
+    </p>
+  </div>
+
+  <div class="faq-item">
+    <h3>5. Why TorchRL over stable-baselines3 or CleanRL?</h3>
+    <p>
+      TorchRL's <code>ParallelEnv</code> and <code>tensordict</code> integration made scaling to 16
+      workers and batching rollouts from a Gymnasium <code>Dict</code> observation space straightforward.
+      CleanRL is excellent for single-environment baselines — I used it in early prototyping — but TorchRL
+      scales better for this curriculum setup.
+    </p>
+  </div>
+
+  <!-- ── Section 9: Try It ──────────────────────────────────────── -->
+  <h2 id="try-it">Try It Yourself</h2>
+
+  <pre><code>git clone https://github.com/NirmalPratheep/curriculum-car-racer
+cd curriculum-car-racer
+uv sync
+
+# Watch the trained agent on all 10 tracks (saves MP4s)
+uv run python inference/inference.py \
+  --checkpoint checkpoints/ppo_torchrl_final.pt
+
+# Play interactively yourself (arrow keys)
+uv run python main.py        # Track 1 — Wide Oval
+uv run python main.py 9      # Track 9 — Hairpin
+
+# Train from scratch (~1–3 hours on GPU)
+bash training/cmd
+
+# Serve as an OpenEnv HTTP API
+uvicorn env.server.app:app --host 0.0.0.0 --port 8000</code></pre>
+
+  <!-- ── Section 10: Learn More ──────────────────────────────────── -->
+  <h2 id="learn-more">Learn More</h2>
+
+  <div class="learn-more-links">
+    <a href="https://github.com/NirmalPratheep/curriculum-car-racer" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.6 1.2 3.2.9.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+      GitHub Repo
+    </a>
+    <a href="https://huggingface.co/NirmalPratheep/curriculum-car-racer" target="_blank">
+      🤗 HuggingFace Hub
+    </a>
+    <a href="https://openenv.dev" target="_blank">🌐 OpenEnv</a>
+    <a href="https://github.com/pytorch/rl" target="_blank">⚡ TorchRL</a>
+    <a href="https://arxiv.org/abs/1802.01561" target="_blank">📄 ImpalaCNN Paper</a>
+    <a href="https://dl.acm.org/doi/10.1145/1553374.1553380" target="_blank">📄 Curriculum Learning (Bengio 2009)</a>
+  </div>
+
+  <!-- ── Citation ───────────────────────────────────────────────── -->
+  <h2>Citation</h2>
+  <div class="citation">@misc{pratheep2026curriculumcarracer,
+  title   = {Curriculum Car Racer: Automated Curriculum RL with OpenEnv},
+  author  = {Nirmal Pratheep},
+  year    = {2026},
+  url     = {https://github.com/NirmalPratheep/curriculum-car-racer}
+}</div>
+
+  <!-- ── Footer ─────────────────────────────────────────────────── -->
+  <footer class="post-footer">
+    <p>OpenEnv Student Challenge submission · April 2026 · All code, weights and training logs are open source.</p>
+  </footer>
+
+</div><!-- /.page -->
+</body>
+</html>
