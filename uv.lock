@@ -1037,10 +1037,12 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "av" },
+    { name = "gradio" },
     { name = "gymnasium" },
     { name = "imageio" },
     { name = "numpy" },
     { name = "openenv-core" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pygame-ce" },
     { name = "tensordict" },
@@ -1052,10 +1054,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "av", specifier = ">=14.0.0" },
+    { name = "gradio", specifier = ">=6.12.0" },
     { name = "gymnasium", specifier = ">=0.29.0" },
     { name = "imageio", specifier = ">=2.35.0" },
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "openenv-core", specifier = ">=0.2.3" },
+    { name = "pillow", specifier = ">=11.3.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pygame-ce", specifier = ">=2.5.0" },
     { name = "tensordict", specifier = ">=0.6.0" },

@@ -23,6 +23,8 @@ uvicorn env.server.app:app --host 0.0.0.0 --port 8000
 
 ![Agent driving all 10 curriculum tracks](../inference_videos/collage.gif)
 
+> 🎮 **Try the live demo:** [nirmalpratheep/Car-Racing-Agent](https://huggingface.co/spaces/nirmalpratheep/Car-Racing-Agent) — pick a track, hit *Auto-Drive*, watch the trained agent lap it.
+
 ---
 
 ## Table of Contents
@@ -352,6 +354,7 @@ uvicorn env.server.app:app --host 0.0.0.0 --port 8000
 
 ## Learn More
 
+- **🎮 Live Demo (HF Space)**: [nirmalpratheep/Car-Racing-Agent](https://huggingface.co/spaces/nirmalpratheep/Car-Racing-Agent)
 - **GitHub**: [NirmalPratheep/curriculum-car-racer](https://github.com/NirmalPratheep/curriculum-car-racer)
 - **HuggingFace Hub**: [NirmalPratheep/curriculum-car-racer](https://huggingface.co/NirmalPratheep/curriculum-car-racer)
 - **OpenEnv**: [openenv.dev](https://openenv.dev) — the environment standard used in this project

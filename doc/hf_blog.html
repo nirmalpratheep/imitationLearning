@@ -99,6 +99,25 @@
       margin-top: 4px;
     }
 
+    /* ── Live-demo callout ────────────────────────────────────── */
+    .demo-callout {
+      background: linear-gradient(135deg, #fff8f0 0%, #fef3c7 100%);
+      border: 1px solid #fbbf24;
+      border-left: 4px solid #f97316;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin: 18px 0 28px;
+      font-size: 15px;
+      color: #78350f;
+    }
+    .demo-callout a {
+      color: #c2410c;
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: 1px dashed #fb923c;
+    }
+    .demo-callout a:hover { color: #9a3412; border-bottom-style: solid; }
+
     /* ── Hero GIF ─────────────────────────────────────────────── */
     .hero-gif {
       width: 100%;
@@ -315,6 +334,15 @@
        src="../inference_videos/collage.gif"
        alt="Agent driving all 10 curriculum tracks simultaneously" />
   <p class="caption">The final trained policy — zero crashes, at least one completed lap on every track, evaluated deterministically.</p>
+
+  <!-- ── Live demo callout ────────────────────────────────────── -->
+  <div class="demo-callout">
+    🎮 <strong>Try the live demo</strong>:
+    <a href="https://huggingface.co/spaces/nirmalpratheep/Car-Racing-Agent" target="_blank">
+      nirmalpratheep/Car-Racing-Agent
+    </a>
+    — pick a track, hit <em>Auto-Drive</em>, watch the trained agent lap it.
+  </div>
 
   <!-- ── Table of Contents ──────────────────────────────────────── -->
   <nav class="toc">
@@ -743,6 +771,9 @@ uvicorn env.server.app:app --host 0.0.0.0 --port 8000</code></pre>
   <h2 id="learn-more">Learn More</h2>
 
   <div class="learn-more-links">
+    <a href="https://huggingface.co/spaces/nirmalpratheep/Car-Racing-Agent" target="_blank">
+      🎮 Live Demo (HF Space)
+    </a>
     <a href="https://github.com/NirmalPratheep/curriculum-car-racer" target="_blank">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.6 1.2 3.2.9.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
       GitHub Repo

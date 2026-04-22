@@ -1,0 +1,11 @@
+gradio>=4.0
+torch
+torchrl
+tensordict
+pygame
+numpy
+Pillow
+imageio
+imageio-ffmpeg
+openenv-core
+pydantic
